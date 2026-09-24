@@ -1,0 +1,1 @@
+"""Local PPE video application."""
