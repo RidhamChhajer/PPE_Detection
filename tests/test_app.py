@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import unittest
 
 from app.app import create_app, RETENTION_SECONDS
+from support import registry_fixture
 
 
 class AppTests(unittest.TestCase):
@@ -18,9 +19,7 @@ class AppTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         models = self.root/'models'
         models.mkdir()
-        (models/'goggles.engine').write_bytes(b'test')
-        digest = hashlib.sha256(b'test').hexdigest()
-        (models/'goggles.toml').write_text(f'label="goggles"\nstatus="sample"\nengine_sha256="{digest}"')
+        registry = registry_fixture(models)
         self.release = threading.Event()
         self.started = threading.Event()
         self.failure = False
@@ -35,13 +34,14 @@ class AppTests(unittest.TestCase):
             result = SimpleNamespace(frames=1, width=64, height=48, fps=25, duration=.04)
             return result, result, 0
 
-        self.app = create_app(self.root/'jobs', models, processor)
+        self.app = create_app(self.root/'jobs', models, processor, registry=registry)
         self.client = self.app.test_client()
         self.jobs = self.app.extensions['video_jobs']
         self.addCleanup(self.jobs.close)
         self.addCleanup(self.release.set)
         page = self.client.get('/').get_data(as_text=True)
-        self.assertIn('Demo model installed', page)
+        self.assertIn('goggles-v1', page)
+        self.assertNotIn('Demo model installed', page)
         self.token = re.search(r'name="csrf-token" content="([^"]+)"', page)[1]
 
     def upload(self, name='input.mp4', content=b'video', headers=None):

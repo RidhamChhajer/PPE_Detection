@@ -1,0 +1,7 @@
+numpy==1.26.4
+opencv-python==4.10.0.84
+onnxruntime==1.20.1
+tomli==2.4.1
+av==16.0.1
+Flask==3.1.2
+waitress==3.0.2

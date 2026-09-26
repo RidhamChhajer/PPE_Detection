@@ -38,9 +38,9 @@ def validate_document(document, image_root: Path, expected_classes: tuple[str, .
     annotations = _index(document.get("annotations"), "annotation")
     categories = _index(document.get("categories"), "category")
     require(images, "Split contains no images")
-    names = tuple(category.get("name") for _, category in sorted(categories.items()))
+    names = tuple(category.get("name") for category in categories.values())
     require(names == expected_classes,
-            f"Expected categories {expected_classes!r} in ID order, found {names!r}")
+            f"Expected categories {expected_classes!r} in annotation order, found {names!r}")
 
     root = image_root.resolve()
     file_names = set()

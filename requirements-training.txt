@@ -1,0 +1,7 @@
+-r requirements-runtime.txt
+torch==2.1.2
+torchvision==0.16.2
+mmengine==0.10.7
+mmdet==3.3.0
+scipy==1.15.3
+# Install MMCV 2.1.0 for your Torch/CUDA/platform first; see MD DOC/INSTALLATION.md.

@@ -1,0 +1,4 @@
+-r requirements-runtime.txt
+# ONNX is used to generate tiny models in offline CPU regression tests.
+onnx==1.16.2
+scipy==1.15.3

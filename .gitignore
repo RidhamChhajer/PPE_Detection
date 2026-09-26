@@ -21,3 +21,12 @@ data/
 *.avi
 *.mov
 *.mkv
+*.webm
+*.m4v
+*.log
+.env
+.env.*
+release_assets/
+local/
+.coverage
+htmlcov/

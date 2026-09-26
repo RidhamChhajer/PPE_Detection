@@ -12,13 +12,13 @@
   <header><div class="brand"><span class="brand-mark">P</span><div>PPE Video Review<small>LOCAL WORKSPACE</small></div></div><span class="local"><i></i> Processing on this computer</span></header>
   <main>
     <div class="intro"><p class="eyebrow">VIDEO ANNOTATION</p><h1>Review every frame.</h1><p>Upload a video to locate visible PPE. All installed detectors run automatically.</p></div>
-    <aside class="notice" role="note"><span class="notice-icon">!</span><div><strong>{% if sample %}Demo model installed{% else %}Field validation required{% endif %}</strong><p>{% if sample %}These weights were trained on a small sample. Use the results for pipeline testing, not operational safety decisions.{% else %}This model requires evaluation in your operating conditions before operational use.{% endif %}</p></div></aside>
+    <aside class="notice" role="note"><span class="notice-icon">!</span><div><strong>Review detections in context</strong><p>Performance depends on the training data and recording conditions. This application does not certify safety compliance.</p></div></aside>
     <div class="workspace">
       <section class="card input-card"><div class="section-head"><span class="step">01</span><h2>Source video</h2></div>
         <form id="upload-form">
           <label class="dropzone" id="dropzone" for="video-file"><span class="upload-symbol">↑</span><strong id="file-label">Choose a video</strong><span id="file-detail">or drag and drop it here</span><small>MP4, MOV, MKV, AVI, WebM · up to 512 MB</small></label>
           <input id="video-file" name="video" type="file" accept=".mp4,.mov,.mkv,.avi,.webm,.m4v" required>
-          <div class="detectors"><span>Available detectors</span><div>{% for spec in specs %}<span class="tag">{{ spec.label }}</span>{% endfor %}</div></div>
+          <div class="detectors"><span>Installed detectors</span><div>{% for spec in specs %}<span class="tag" title="{{ spec.labels|join(', ') }}">{{ spec.model_id }} · {{ spec.labels|join(', ') }}</span>{% endfor %}</div></div>
           <button id="process-button" type="submit" disabled>Process video <span>→</span></button>
         </form>
         <div id="progress-region" class="progress-region" hidden aria-live="polite"><div class="progress-heading"><strong id="stage">Preparing</strong><span id="percentage">0%</span></div><progress id="progress" max="100" value="0"></progress><p id="progress-detail"></p></div>
@@ -26,7 +26,7 @@
         <div class="input-notes"><p>Full video · Every frame · No audio in output</p><p>Original resolution and playback timing are preserved.</p></div>
       </section>
       <section class="card output-card"><div class="section-head"><span class="step">02</span><h2>Annotated result</h2><span id="result-badge">WAITING</span></div>
-        <div id="empty-output"><div class="frame-icon"><span></span></div><h3>Your result will appear here</h3><p>Green boxes show the class and confidence<br>for each detection.</p></div>
+        <div id="empty-output"><div class="frame-icon"><span></span></div><h3>Your result will appear here</h3><p>Class colors, labels and confidence<br>identify each detection.</p></div>
         <video id="output-video" controls playsinline preload="metadata" hidden></video>
         <div id="result-footer" hidden><p id="result-summary"></p><a id="download" class="download" href="#" download>Download annotated video ↓</a></div>
       </section>

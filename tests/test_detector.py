@@ -26,10 +26,10 @@ class DetectorMathTests(unittest.TestCase):
     def test_rescaling_clipping_and_threshold(self):
         raw = np.array([[0, 0, 220, 60, .8], [0, 0, 20, 20, .1]])
         result = postprocess(raw, (2, 2), (50, 100, 3))
-        np.testing.assert_allclose(result, [[0, 0, 100, 30, .8]])
+        np.testing.assert_allclose(result, [[0, 0, 100, 30, .8, 0]])
 
     def test_empty_and_nonfinite(self):
-        self.assertEqual(postprocess(np.zeros((1, 8400, 5)), (1,1), (10,10,3)).shape, (0,5))
+        self.assertEqual(postprocess(np.zeros((1, 8400, 5)), (1,1), (10,10,3)).shape, (0,6))
         with self.assertRaises(RuntimeError):
             postprocess(np.array([[0,0,1,1,np.nan]]), (1,1), (10,10,3))
 

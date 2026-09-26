@@ -1,4 +1,4 @@
-"""Create source-separated sample splits from the merged goggles COCO pool."""
+"""Create source-separated splits from a merged goggles COCO pool."""
 
 import json
 from pathlib import Path
@@ -49,7 +49,7 @@ def main():
             shutil.copy2(image_root / image["file_name"], destination / image["file_name"])
         split_document = {
             "info": dict(document.get("info", {}), split=split,
-                         split_policy="source-separated sample; limited recordings"),
+                         split_policy="source-separated; limited recordings"),
             "licenses": document.get("licenses", []),
             "images": images_by_split[split],
             "annotations": annotations_by_split[split],

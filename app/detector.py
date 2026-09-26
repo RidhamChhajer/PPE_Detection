@@ -2,6 +2,7 @@
 from pathlib import Path
 from dataclasses import dataclass
 import hashlib
+import json
 import threading
 
 import cv2
@@ -11,6 +12,7 @@ import tomli
 INPUT_SIZE = 640
 MEAN = np.array([103.53, 116.28, 123.675], dtype=np.float32)
 STD = np.array([57.375, 57.12, 58.395], dtype=np.float32)
+CONTRACT = 'rtmdet-bgr-640-pad114-xyxy-sigmoid-v2'
 
 
 @dataclass(frozen=True)
@@ -18,11 +20,27 @@ class ModelSpec:
     path: Path
     label: str
     status: str
+    labels: tuple
+    engine_sha256: str
+    contract: str = ''
+
+
+def engine_identity(label, labels):
+    return json.dumps(dict(contract=CONTRACT, model=label, labels=list(labels)), separators=(',', ':'))
+
+
+def check_engine_metadata(spec, shape, name):
+    if tuple(shape) != (1, 8400, 4 + len(spec.labels)):
+        raise ValueError('Engine output class count disagrees with metadata labels')
+    if spec.contract and name != engine_identity(spec.label, spec.labels):
+        raise ValueError('Engine embedded class identity disagrees with metadata labels/order')
 
 
 def model_specs(directory):
     """Discover installed engines and verify their status/provenance sidecars."""
     specifications = []
+    if (Path(directory)/'.installing').exists():
+        raise RuntimeError('Model installation in progress; retry after completion')
     for path in sorted(Path(directory).glob('*.engine')):
         metadata_path = path.with_suffix('.toml')
         if not metadata_path.is_file():
@@ -35,9 +53,25 @@ def model_specs(directory):
             raise RuntimeError(f'Unrecognized model validation status: {path.name}')
         if metadata.get('engine_sha256') != hashlib.sha256(path.read_bytes()).hexdigest():
             raise RuntimeError(f'Engine checksum mismatch: {path.name}')
-        specifications.append(ModelSpec(path.resolve(), path.stem, status))
+        labels = metadata.get('labels', [path.stem])
+        if (not isinstance(labels, list) or not labels or
+                any(not isinstance(label, str) or not label.strip() for label in labels) or
+                len(set(labels)) != len(labels)):
+            raise RuntimeError(f'Invalid class metadata labels: {path.name}')
+        contract = metadata.get('contract', '')
+        if ('labels' in metadata or 'num_classes' in metadata) and (
+                'labels' not in metadata or contract != CONTRACT or
+                type(metadata.get('num_classes')) is not int or metadata['num_classes'] != len(labels)):
+            raise RuntimeError(f'Inconsistent class metadata: {path.name}')
+        if contract and 'labels' not in metadata:
+            raise RuntimeError('Missing ordered class metadata labels')
+        if not contract and path.stem == 'footwear':
+            raise RuntimeError('Footwear requires explicit multiclass metadata')
+        specifications.append(ModelSpec(path.resolve(), path.stem, status, tuple(labels), metadata['engine_sha256'], contract))
     if not specifications:
         raise RuntimeError('No verified TensorRT engines installed. Run the export and verification step first.')
+    if (Path(directory)/'.installing').exists():
+        raise RuntimeError('Model installation in progress; retry after completion')
     return specifications
 
 
@@ -58,10 +92,16 @@ def preprocess(frame):
 def postprocess(raw, scales, shape, threshold=0.30, nms_iou=0.65):
     if not 0 < threshold <= 1 or not 0 < nms_iou <= 1:
         raise ValueError('Thresholds must be within (0, 1]')
-    detections = np.asarray(raw, dtype=np.float32).reshape(-1, 5)
-    if not np.isfinite(detections).all():
+    raw = np.asarray(raw, dtype=np.float32)
+    if raw.ndim not in (2, 3) or raw.shape[-1] < 5 or (raw.ndim == 3 and raw.shape[0] != 1):
+        raise ValueError('Expected RTMDet output [1,N,4+C] or [N,4+C]')
+    raw = raw.reshape(-1, raw.shape[-1])
+    if not np.isfinite(raw).all():
         raise RuntimeError('Detector returned non-finite outputs')
-    detections = detections[detections[:, 4] >= threshold].copy()
+    rows, labels = np.where(raw[:, 4:] >= threshold)
+    detections = np.column_stack((raw[rows, :4], raw[rows, 4 + labels], labels)).astype(np.float32)
+    # Match MMDetection min_bbox_size=0 before NMS/the 300-result limit.
+    detections = detections[(detections[:,2] > detections[:,0]) & (detections[:,3] > detections[:,1])]
     if not len(detections):
         return detections
     detections[:, [0, 2]] /= scales[0]
@@ -78,7 +118,7 @@ def postprocess(raw, scales, shape, threshold=0.30, nms_iou=0.65):
         area = np.maximum(0, box[2:] - box[:2]).prod()
         other_area = np.maximum(0, boxes[:, 2:] - boxes[:, :2]).prod(axis=1)
         iou = intersection / np.maximum(area + other_area - intersection, 1e-8)
-        order = rest[iou <= nms_iou]
+        order = rest[(iou <= nms_iou) | (detections[rest, 5] != detections[index, 5])]
     result = detections[kept]
     result[:, [0, 2]] = np.clip(result[:, [0, 2]], 0, shape[1])
     result[:, [1, 3]] = np.clip(result[:, [1, 3]], 0, shape[0])
@@ -87,7 +127,7 @@ def postprocess(raw, scales, shape, threshold=0.30, nms_iou=0.65):
 
 class TensorRTEngine:
     """One fixed-shape engine with explicitly owned CUDA resources."""
-    def __init__(self, path):
+    def __init__(self, path, spec=None):
         import tensorrt as trt
         from cuda.bindings import driver
         self.driver = driver
@@ -98,6 +138,9 @@ class TensorRTEngine:
         self._stream = None
         self.context = self.engine = self.runtime = None
         self.label = Path(path).stem
+        if spec is None:
+            spec = next(s for s in model_specs(Path(path).parent) if s.path == Path(path).resolve())
+        self.labels = spec.labels
         try:
             self._check(driver.cuInit(0))
             self._device = self._check(driver.cuDeviceGet(0))
@@ -106,7 +149,10 @@ class TensorRTEngine:
             self._stream = self._check(driver.cuStreamCreate(0))
             self.logger = trt.Logger(trt.Logger.WARNING)
             self.runtime = trt.Runtime(self.logger)
-            self.engine = self.runtime.deserialize_cuda_engine(Path(path).read_bytes())
+            engine_bytes = Path(path).read_bytes()
+            if hashlib.sha256(engine_bytes).hexdigest() != spec.engine_sha256:
+                raise RuntimeError('Engine checksum changed since discovery')
+            self.engine = self.runtime.deserialize_cuda_engine(engine_bytes)
             if self.engine is None:
                 raise RuntimeError('Cannot load TensorRT engine; rebuild it on this GPU')
             self.context = self.engine.create_execution_context()
@@ -122,11 +168,11 @@ class TensorRTEngine:
             self.input_name, self.output_name = inputs[0], outputs[0]
             if tuple(self.engine.get_tensor_shape(self.input_name)) != (1, 3, 640, 640):
                 raise ValueError('Expected fixed input shape (1, 3, 640, 640)')
-            if tuple(self.engine.get_tensor_shape(self.output_name)) != (1, 8400, 5):
-                raise ValueError('Expected single-class RTMDet output (1, 8400, 5)')
+            output_shape = tuple(self.engine.get_tensor_shape(self.output_name))
+            check_engine_metadata(spec, output_shape, self.engine.name)
             if any(self.engine.get_tensor_dtype(n) != trt.float32 for n in self.names):
                 raise ValueError('Engine IO must be float32; internal kernels may use FP16')
-            self.host_output = np.empty((1, 8400, 5), dtype=np.float32)
+            self.host_output = np.empty(output_shape, dtype=np.float32)
             self.input_ptr = self._allocate(1 * 3 * 640 * 640 * 4)
             self.output_ptr = self._allocate(self.host_output.nbytes)
             for name, pointer in ((self.input_name, self.input_ptr), (self.output_name, self.output_ptr)):

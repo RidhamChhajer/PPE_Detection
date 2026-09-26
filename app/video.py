@@ -8,7 +8,8 @@ from pathlib import Path
 import av
 import cv2
 
-from .detector import TensorRTEngine, model_specs
+from .registry import model_specs, DEFAULT_REGISTRY
+from .runtime import Detector, Detection
 
 
 @dataclass(frozen=True)
@@ -70,10 +71,21 @@ def inspect_video(path, progress=None):
                          digest.hexdigest(), stream.codec_context.name, len(container.streams.audio))
 
 
-def draw_detections(frame, label, detections):
-    for x1, y1, x2, y2, confidence in detections:
+def draw_detections(frame, labels, detections, colors=None):
+    colors = colors or [(0,255,0)] * len(labels)
+    for detection in detections:
+        if isinstance(detection, Detection):
+            x1,y1,x2,y2,confidence,class_id = detection.x1,detection.y1,detection.x2,detection.y2,detection.confidence,detection.class_id
+            if not 0 <= class_id < len(labels) or detection.class_label != labels[class_id]:
+                raise ValueError('Detection class ID/label disagrees with model labels')
+        else:
+            x1,y1,x2,y2,confidence,class_id = detection
+        if not float(class_id).is_integer() or not 0 <= int(class_id) < len(labels):
+            raise ValueError('Detection class ID disagrees with model labels')
+        label = labels[int(class_id)]
+        color = colors[int(class_id)]
         left, top, right, bottom = int(x1), int(y1), int(x2), int(y2)
-        cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+        cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
         text = f'{label} {confidence:.2f}'
         scale = max(0.4, min(frame.shape[1] / 1400, 0.8))
         (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
@@ -81,14 +93,15 @@ def draw_detections(frame, label, detections):
         text_y = max(text_height + 4, top - 5)
         cv2.rectangle(frame, (text_left, text_y-text_height-3),
                       (text_left+text_width+3, text_y+baseline), (20, 28, 20), -1)
-        cv2.putText(frame, text, (text_left+1, text_y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0,255,0), 1, cv2.LINE_AA)
+        cv2.putText(frame, text, (text_left+1, text_y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
     return frame
 
 
-def process_video(source, destination, models_directory, progress=None, engine_factory=TensorRTEngine):
+def process_video(source, destination, models_directory, progress=None, engine_factory=None, statistics=None,
+                  registry=DEFAULT_REGISTRY, backend='onnx', provider='cpu'):
     """Run every installed model on every original frame, then verify the output.
 
-    engine_factory is injectable for tests; the application always uses TensorRT.
+    engine_factory is injectable for tests; ONNX Runtime is the default backend.
     The only output artifact is the complete annotated video, with no audio.
     """
     source, destination = Path(source).resolve(), Path(destination).resolve()
@@ -96,7 +109,8 @@ def process_video(source, destination, models_directory, progress=None, engine_f
         raise ValueError('Input and output must be different files')
     if destination.exists():
         raise FileExistsError('Refusing to overwrite an existing output video')
-    specifications = model_specs(models_directory)
+    specifications = model_specs(models_directory, registry, backend)
+    class_counts = {label: 0 for spec in specifications for label in spec.labels}
 
     def update(stage, count, total):
         if progress:
@@ -111,7 +125,9 @@ def process_video(source, destination, models_directory, progress=None, engine_f
     detections = 0
     try:
         with ExitStack() as resources:
-            engines = [(spec, resources.enter_context(engine_factory(spec.path))) for spec in specifications]
+            engines = [(spec, resources.enter_context(
+                Detector(spec, provider) if engine_factory is None
+                else engine_factory(spec.path))) for spec in specifications]
             reader = resources.enter_context(av.open(str(source)))
             input_stream = reader.streams.video[0]
             writer = resources.enter_context(av.open(str(temporary), mode='w', format='mp4', options={'movflags': '+faststart'}))
@@ -141,10 +157,12 @@ def process_video(source, destination, models_directory, progress=None, engine_f
                 relative = timestamp - first
                 pixels = frame.to_ndarray(format='bgr24')
                 # Every engine sees the same unannotated frame.
-                combined = [(spec.label, engine.detect(pixels)) for spec, engine in engines]
-                for label, boxes in combined:
+                combined = [(spec, engine.detect(pixels)) for spec, engine in engines]
+                for spec, boxes in combined:
                     detections += len(boxes)
-                    draw_detections(pixels, label, boxes)
+                    draw_detections(pixels, spec.labels, boxes, spec.colors)
+                    for box in boxes:
+                        class_counts[box.class_label if isinstance(box,Detection) else spec.labels[int(box[5])]] += 1
                 encoded = av.VideoFrame.from_ndarray(pixels, format='bgr24')
                 encoded.pts = int(relative / original.time_base)
                 encoded.time_base = original.time_base
@@ -171,6 +189,8 @@ def process_video(source, destination, models_directory, progress=None, engine_f
             raise RuntimeError('Output must be silent H.264')
         temporary.replace(destination)
         update('Complete', original.frames, original.frames)
+        if statistics is not None:
+            statistics.update(class_counts)
         return original, result, detections
     finally:
         temporary.unlink(missing_ok=True)

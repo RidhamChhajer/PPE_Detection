@@ -1,9 +1,12 @@
 from pathlib import Path
 import tempfile
 import unittest
+import importlib.util
 from unittest.mock import patch
 
 import numpy as np
+if any(importlib.util.find_spec(name) is None for name in ('torch','mmengine','mmdet','mmcv')):
+    raise unittest.SkipTest('Training dependencies are optional in the portable runtime environment')
 import torch
 from mmengine.config import Config
 from mmengine.model import BaseModel
@@ -13,7 +16,7 @@ from mmdet.datasets.transforms import RandomCrop
 from mmdet.structures.bbox import HorizontalBoxes
 
 from tools.stable_optim import FiniteOptimWrapper
-from tools.train import check_run_directory
+from tools.train import check_run_directory, resolve_resume_checkpoint
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -114,6 +117,19 @@ class StabilityTests(unittest.TestCase):
             (root/'unrelated.pth').touch()
             with self.assertRaisesRegex(ValueError, 'not empty'):
                 check_run_directory(root, False, 'footwear_rtmdet_s.py')
+
+    def test_resume_uses_run_checkpoint_not_pretrained_weights(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work_dir = Path(temporary)
+            checkpoint = work_dir / 'epoch_26.pth'
+            checkpoint.touch()
+            (work_dir / 'last_checkpoint').write_text(str(checkpoint), encoding='utf-8')
+            self.assertEqual(resolve_resume_checkpoint(work_dir), checkpoint.resolve())
+
+            (work_dir / 'last_checkpoint').write_text(
+                str(work_dir.parent / 'pretrained.pth'), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'inside the run directory'):
+                resolve_resume_checkpoint(work_dir)
 
 
 if __name__ == '__main__':

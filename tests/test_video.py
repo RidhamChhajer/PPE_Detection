@@ -8,6 +8,7 @@ import av
 import numpy as np
 
 from app.video import inspect_video, process_video
+from support import registry_fixture
 
 
 def make_video(path, timestamps):
@@ -43,7 +44,7 @@ class FakeEngine:
         if np.any((frame[:, :, 1] == 255) & (frame[:, :, 0] == 0)):
             raise AssertionError('Engine received an already-annotated image')
         self.calls.append(self.label)
-        return np.array([[10, 20, 20, 30, .9]], dtype=np.float32)
+        return np.array([[10, 20, 20, 30, .9, 0]], dtype=np.float32)
 
 
 class VideoTests(unittest.TestCase):
@@ -53,10 +54,7 @@ class VideoTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.models = self.root / 'models'
         self.models.mkdir()
-        for label in ('first', 'second'):
-            (self.models / f'{label}.engine').write_bytes(b'test')
-            digest = hashlib.sha256(b'test').hexdigest()
-            (self.models / f'{label}.toml').write_text(f'label="{label}"\nstatus="sample"\nengine_sha256="{digest}"')
+        self.registry = registry_fixture(self.models,('first-v1','second-v1'))
         FakeEngine.calls = []
 
     def test_complete_constant_and_variable_timing(self):
@@ -65,7 +63,7 @@ class VideoTests(unittest.TestCase):
                 source = self.root / f'{name}.mp4'
                 make_video(source, timestamps)
                 before = len(FakeEngine.calls)
-                original, result, detections = process_video(source, self.root/f'{name}_out.mp4', self.models, engine_factory=FakeEngine)
+                original, result, detections = process_video(source, self.root/f'{name}_out.mp4', self.models, engine_factory=FakeEngine, registry=self.registry)
                 self.assertEqual(result.frames, 4)
                 self.assertEqual(original.timeline_hash, result.timeline_hash)
                 self.assertEqual(original.duration, result.duration)
@@ -83,7 +81,7 @@ class VideoTests(unittest.TestCase):
         make_video(source, [0,40])
         destination = self.root/'output.mp4'
         with self.assertRaisesRegex(RuntimeError, 'Injected'):
-            process_video(source, destination, self.models, engine_factory=BrokenEngine)
+            process_video(source, destination, self.models, engine_factory=BrokenEngine, registry=self.registry)
         self.assertFalse(destination.exists())
         self.assertFalse((self.root/'output.partial.mp4').exists())
         self.assertTrue(source.exists())

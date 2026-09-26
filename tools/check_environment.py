@@ -1,6 +1,6 @@
 """Inventory this environment and verify pretrained RTMDet-S on CUDA.
 
-Run with the project's .venv interpreter. Outputs stay in artifacts/phase1.
+Run with the training environment. Outputs stay in artifacts/environment.
 This verifies the framework only; the COCO model is not a PPE detector.
 """
 
@@ -60,7 +60,7 @@ def main():
     inputs.add_argument("--video", type=Path, help="Test the first decoded video frame")
     parser.add_argument("--inventory-only", action="store_true")
     args = parser.parse_args()
-    output = ROOT / "artifacts" / "phase1"
+    output = ROOT / "artifacts" / "environment"
     output.mkdir(parents=True, exist_ok=True)
     lines = []
 

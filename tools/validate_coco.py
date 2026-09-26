@@ -1,7 +1,7 @@
-"""Validate the sample COCO export, normalize goggles, and verify MMDetection loading.
+"""Import a legacy goggles COCO export and verify MMDetection loading.
 
 Original images and annotations are read-only. Cleaned annotations and previews
-are written under artifacts/phase2; images remain in the source split folders.
+are written to the explicit output directory; original images stay unchanged.
 """
 
 import argparse
@@ -171,7 +171,7 @@ def verify_mmdetection(annotation_path, image_root, document, preview_path):
     expected = defaultdict(list)
     for ann in document["annotations"]:
         expected[ann["image_id"]].append(ann)
-    visualizer = DetLocalVisualizer(name=f"phase2_{annotation_path.stem}", line_width=2)
+    visualizer = DetLocalVisualizer(name=f"import_{annotation_path.stem}", line_width=2)
     visualizer.dataset_meta = dataset.metainfo
     preview_indices = set(np.linspace(0, len(dataset) - 1, min(3, len(dataset)), dtype=int))
     previews = []
@@ -207,8 +207,8 @@ def verify_mmdetection(annotation_path, image_root, document, preview_path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, default=ROOT / "data/sample_goggles")
-    parser.add_argument("--output", type=Path, default=ROOT / "artifacts/phase2")
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     source, output = args.source.resolve(), args.output.resolve()
     require(not output.is_relative_to(source) and not source.is_relative_to(output),
@@ -238,13 +238,13 @@ def main():
         for name, splits in sorted(source_splits.items()):
             if len(splits) > 1:
                 lines.append(f"WARNING: inferred source video shared across {', '.join(sorted(splits))}: {name}")
-        lines.append("Sample pipeline only: source-video, worker, or session separation is required for final evaluation. Filename checks cannot certify split independence.")
+        lines.append("Independent source-video, worker or session evaluation is recommended. Filenames cannot certify split independence.")
         for split, clean in validated.items():
             annotation_path = output / f"{split}.json"
             annotation_path.write_text(json.dumps(clean, indent=2, allow_nan=False) + "\n", encoding="utf-8")
             count = verify_mmdetection(annotation_path, source / split, clean, output / f"{split}_preview.jpg")
             lines.append(f"{split}: MMDetection loaded all {len(clean['images'])} images / {count} boxes and saved ground-truth visualization: PASS")
-        lines.append("PASS: Phase 2 dataset validation and MMDetection visualization complete.")
+        lines.append("PASS: dataset import and MMDetection visualization complete.")
         print("\n".join(lines[len(SPLITS) + 2:]), flush=True)
         return 0
     except Exception as error:

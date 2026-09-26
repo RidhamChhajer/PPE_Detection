@@ -8,12 +8,13 @@ import secrets
 import threading
 import time
 import uuid
+from functools import partial
 
 from flask import Flask, abort, jsonify, render_template, request, send_file
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 
-from .detector import model_specs
+from .registry import model_specs, DEFAULT_REGISTRY
 from .video import process_video
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,12 +121,13 @@ class VideoJobs:
         self.executor.shutdown(wait=True, cancel_futures=False)
 
 
-def create_app(runtime=None, models=None, processor=process_video):
+def create_app(runtime=None, models=None, processor=None, registry=DEFAULT_REGISTRY, backend='onnx', provider='cpu'):
     app = Flask(__name__)
     app.config.update(MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES, MAX_FORM_PARTS=10,
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
     models = Path(models or ROOT/'models')
-    specs = model_specs(models)
+    specs = model_specs(models, registry, backend)
+    processor = processor or partial(process_video, registry=registry, backend=backend, provider=provider)
     token = secrets.token_urlsafe(32)
     jobs = VideoJobs(runtime or ROOT/'artifacts/app', models, app.logger, processor)
     app.extensions['video_jobs'] = jobs
@@ -156,8 +158,7 @@ def create_app(runtime=None, models=None, processor=process_video):
 
     @app.get('/')
     def index():
-        return render_template('index.html', token=token, specs=specs,
-                               sample=any(spec.status == 'sample' for spec in specs))
+        return render_template('index.html', token=token, specs=specs)
 
     @app.post('/api/jobs')
     def upload():
@@ -216,11 +217,15 @@ def create_app(runtime=None, models=None, processor=process_video):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--backend', choices=['onnx','tensorrt'], default='onnx')
+    parser.add_argument('--provider', choices=['cpu','cuda'], default='cpu')
+    parser.add_argument('--registry', type=Path, default=DEFAULT_REGISTRY)
+    parser.add_argument('--models', type=Path, default=ROOT/'models')
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error('Choose a port between 1024 and 65535')
     from waitress import serve
-    app = create_app()
+    app = create_app(models=args.models, registry=args.registry, backend=args.backend, provider=args.provider)
     print(f'PPE Video Review: http://127.0.0.1:{args.port}', flush=True)
     print('Current model status is displayed on the page. Ctrl+C stops the server.', flush=True)
     try:

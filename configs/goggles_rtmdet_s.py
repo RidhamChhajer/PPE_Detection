@@ -54,5 +54,7 @@ default_hooks = dict(
 env_cfg = dict(cudnn_benchmark=False, mp_cfg=dict(mp_start_method='spawn', opencv_num_threads=0))
 randomness = dict(seed=2026, deterministic=False)
 auto_scale_lr = dict(enable=False)
-load_from = 'artifacts/phase1/rtmdet_s_8xb32-300e_coco_20220905_161602-387a891e.pth'
+load_from = 'https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet_s_8xb32-300e_coco/rtmdet_s_8xb32-300e_coco_20220905_161602-387a891e.pth'
+model_version = 'v1'
+dataset_version = 'goggles dataset v1'
 work_dir = 'work_dirs/goggles'
