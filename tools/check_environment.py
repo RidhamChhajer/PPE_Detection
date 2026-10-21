@@ -1,4 +1,4 @@
-"""Inventory this environment and verify pretrained RTMDet-S on CUDA.
+"""Inventory this environment and verify pretrained RTMDet-L on CUDA.
 
 Run with the training environment. Outputs stay in artifacts/environment.
 This verifies the framework only; the COCO model is not a PPE detector.
@@ -20,8 +20,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 CHECKPOINT = (
     "https://download.openmmlab.com/mmdetection/v3.0/rtmdet/"
-    "rtmdet_s_8xb32-300e_coco/"
-    "rtmdet_s_8xb32-300e_coco_20220905_161602-387a891e.pth"
+    "rtmdet_l_8xb32-300e_coco/"
+    "rtmdet_l_8xb32-300e_coco_20220719_112030-5a0be7c4.pth"
 )
 DEMO = "https://raw.githubusercontent.com/open-mmlab/mmdetection/v3.3.0/demo/demo.jpg"
 
@@ -129,11 +129,11 @@ def main():
             record(f"Input: {image_path.resolve()}")
 
         checkpoint = output / CHECKPOINT.rsplit("/", 1)[1]
-        download(CHECKPOINT, checkpoint, "387a891e")
+        download(CHECKPOINT, checkpoint, "5a0be7c4")
         record(f"Checkpoint SHA256: {hashlib.sha256(checkpoint.read_bytes()).hexdigest()}")
-        config = Path(mmdet.__file__).parent / ".mim/configs/rtmdet/rtmdet_s_8xb32-300e_coco.py"
+        config = Path(mmdet.__file__).parent / ".mim/configs/rtmdet/rtmdet_l_8xb32-300e_coco.py"
         if not config.is_file():
-            raise FileNotFoundError(f"Packaged RTMDet-S config missing: {config}")
+            raise FileNotFoundError(f"Packaged RTMDet-L config missing: {config}")
         model = init_detector(str(config), str(checkpoint), device="cuda:0")
         if next(model.parameters()).device.type != "cuda":
             raise RuntimeError("Model was not loaded on CUDA")
@@ -160,13 +160,13 @@ def main():
             text = f"{classes[int(label)]} {float(score):.2f}"
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(frame, text, (max(0, x1), max(18, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-        image_output = output / "rtmdet_s_smoke.jpg"
+        image_output = output / "rtmdet_l_smoke.jpg"
         if not cv2.imwrite(str(image_output), frame):
             raise OSError(f"Cannot write {image_output}")
         record(f"Detections >= 0.30: {len(selected)}")
         record(f"Peak GPU tensor allocation: {torch.cuda.max_memory_allocated() / 2**20:.1f} MiB")
         record(f"Annotated image: {image_output}")
-        record("PASS: PyTorch CUDA and pretrained RTMDet-S inference verified. PPE accuracy is not evaluated.")
+        record("PASS: PyTorch CUDA and pretrained RTMDet-L inference verified. PPE accuracy is not evaluated.")
         return 0
     except Exception as error:
         record(f"FAIL: {type(error).__name__}: {error}")

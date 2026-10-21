@@ -10,11 +10,13 @@ import time
 import uuid
 from functools import partial
 
-from flask import Flask, abort, jsonify, render_template, request, send_file
+import cv2
+from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 
-from .registry import model_specs, DEFAULT_REGISTRY
+from .runtime import select_runtime
+from .live import LiveCameras, available_cameras, ROLES
 from .video import process_video
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -121,17 +123,26 @@ class VideoJobs:
         self.executor.shutdown(wait=True, cancel_futures=False)
 
 
-def create_app(runtime=None, models=None, processor=None, registry=DEFAULT_REGISTRY, backend='onnx', provider='cpu'):
+def create_app(runtime=None, models=None, processor=None, registry=None, backend='auto',
+               live_camera=None, camera_list=available_cameras, device='GPU'):
     app = Flask(__name__)
     app.config.update(MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES, MAX_FORM_PARTS=10,
                       TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
     models = Path(models or ROOT/'models')
-    specs = model_specs(models, registry, backend)
-    processor = processor or partial(process_video, registry=registry, backend=backend, provider=provider)
+    specs, registry, inference = select_runtime(models, registry, backend, device)
+    app.logger.warning('Inference: %s / %s', inference['backend'], inference['device'])
+    for reason in inference['fallback_reasons']:
+        app.logger.warning('Auto skipped %s', reason)
+    processor = processor or partial(process_video, registry=registry, backend=inference['backend'], device=device)
     token = secrets.token_urlsafe(32)
     jobs = VideoJobs(runtime or ROOT/'artifacts/app', models, app.logger, processor)
+    live = live_camera or LiveCameras(specs, app.logger)
+    mode_lock = threading.Lock()
     app.extensions['video_jobs'] = jobs
+    app.extensions['live_camera'] = live
+    app.extensions['inference'] = inference
     atexit.register(jobs.close)
+    atexit.register(live.stop)
 
     @app.before_request
     def local_request():
@@ -158,14 +169,17 @@ def create_app(runtime=None, models=None, processor=None, registry=DEFAULT_REGIS
 
     @app.get('/')
     def index():
-        return render_template('index.html', token=token, specs=specs)
+        return render_template('index.html', token=token, specs=specs, inference=inference)
 
     @app.post('/api/jobs')
     def upload():
-        try:
-            identifier, directory = jobs.reserve()
-        except RuntimeError as error:
-            abort(409, str(error))
+        with mode_lock:
+            if live.status()['active']:
+                abort(409, 'Stop live cameras before processing a video')
+            try:
+                identifier, directory = jobs.reserve()
+            except RuntimeError as error:
+                abort(409, str(error))
         try:
             if len(request.files.getlist('video')) != 1 or set(request.files) != {'video'}:
                 abort(400, 'Choose exactly one video to upload')
@@ -211,28 +225,78 @@ def create_app(runtime=None, models=None, processor=None, registry=DEFAULT_REGIS
         return send_file(output_path(identifier), mimetype='video/mp4', as_attachment=True,
                          download_name='ppe_annotated.mp4', conditional=True)
 
+    @app.get('/api/cameras')
+    def cameras():
+        with mode_lock:
+            if live.status()['active']:
+                abort(409, 'Stop cameras before refreshing the camera list')
+            if jobs.active is not None:
+                abort(409, 'Wait for video processing to finish before searching for cameras')
+            return jsonify(camera_list())
+
+    @app.post('/api/live/start')
+    def start_live():
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            abort(400, 'Select at least one camera view')
+        with mode_lock:
+            if jobs.active is not None:
+                abort(409, 'Wait for video processing to finish before starting a camera')
+            try:
+                live.start(data)
+            except (ValueError, cv2.error) as error:
+                abort(400, str(error))
+            except RuntimeError as error:
+                abort(409, str(error))
+        return jsonify(live.status())
+
+    @app.post('/api/live/stop')
+    def stop_live():
+        try:
+            with mode_lock:
+                live.stop()
+        except RuntimeError as error:
+            abort(409, str(error))
+        return jsonify(live.status())
+
+    @app.get('/api/live/status')
+    def live_status():
+        return jsonify(live.status())
+
+    @app.get('/api/live/<role>/stream')
+    def live_stream(role):
+        if role not in ROLES:
+            abort(404)
+        status = live.status()
+        if not status['active'] or role not in status['feeds'] or status['feeds'][role]['state'] in ('failed', 'stopped'):
+            abort(409, 'Start this camera view first')
+        return Response(live.stream(role), mimetype='multipart/x-mixed-replace; boundary=frame')
+
     return app
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8765)
-    parser.add_argument('--backend', choices=['onnx','tensorrt'], default='onnx')
-    parser.add_argument('--provider', choices=['cpu','cuda'], default='cpu')
-    parser.add_argument('--registry', type=Path, default=DEFAULT_REGISTRY)
+    parser.add_argument('--backend', choices=['auto','onnx','tensorrt','openvino'], default='auto')
+    parser.add_argument('--device', choices=['CPU','GPU'], default='GPU', help='OpenVINO device; GPU means Intel graphics')
+    parser.add_argument('--registry', type=Path, help='Override the registry selected by --backend')
     parser.add_argument('--models', type=Path, default=ROOT/'models')
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error('Choose a port between 1024 and 65535')
     from waitress import serve
-    app = create_app(models=args.models, registry=args.registry, backend=args.backend, provider=args.provider)
+    app = create_app(models=args.models, registry=args.registry, backend=args.backend, device=args.device)
     print(f'PPE Video Review: http://127.0.0.1:{args.port}', flush=True)
     print('Current model status is displayed on the page. Ctrl+C stops the server.', flush=True)
     try:
-        serve(app, host='127.0.0.1', port=args.port, threads=4, connection_limit=32,
+        serve(app, host='127.0.0.1', port=args.port, threads=8, connection_limit=32,
               max_request_body_size=MAX_UPLOAD_BYTES, expose_tracebacks=False)
     finally:
-        app.extensions['video_jobs'].close()
+        try:
+            app.extensions['live_camera'].stop()
+        finally:
+            app.extensions['video_jobs'].close()
 
 
 if __name__ == '__main__':

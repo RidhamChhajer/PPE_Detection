@@ -16,7 +16,7 @@ Structural validation is always mandatory. `--strict-provenance` optionally
 requires independent source groups and reviewed negative coverage.
 
 The default initializes from official COCO weights. Use
-`--pretrained release_assets/v1/goggles-v1.pth` to fine-tune existing weights in a
+`--pretrained release_assets/v2/goggles-v2.pth` to fine-tune existing weights in a
 fresh run. Keep class order/head shape compatible; changed classes need deliberate
 head adaptation. A custom config with `load_from=None` trains from random weights.
 

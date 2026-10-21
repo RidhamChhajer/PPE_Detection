@@ -1,6 +1,7 @@
 # Adding a detector
 
 For earplug-v1, evaluate a compatible RTMDet model and add one registry entry:
+`camera_role: face` (or feet for a feet-view detector),
 `id`, `display_name`, `version`, `enabled`, `dataset_version`, ordered `labels`,
 BGR `colors`, `input_size`, confidence/NMS thresholds, `backends`, `contract`,
 ONNX filename/hash and checkpoint filename/hash. Local TensorRT metadata is optional.

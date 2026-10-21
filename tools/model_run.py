@@ -1,7 +1,8 @@
 """Shared, strict selection and provenance for completed RTMDet runs."""
-import hashlib
 import json
 from pathlib import Path
+
+from app.registry import sha256
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -11,14 +12,6 @@ def configure_reference_precision():
     import torch
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
-
-
-def sha256(path):
-    with Path(path).open('rb') as stream:
-        digest = hashlib.sha256()
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def best_checkpoint(run_dir=None):

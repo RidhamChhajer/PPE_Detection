@@ -7,6 +7,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY = ROOT/'configs/models.json'
+LOCAL_REGISTRY = ROOT/'models/registry.local.json'
 CONTRACT = 'rtmdet-bgr-640-pad114-xyxy-sigmoid-v2'
 
 
@@ -29,6 +30,7 @@ class RegisteredModel:
     entry: dict
     directory: Path
     backend: str
+    device: str = 'GPU'
 
     @property
     def model_id(self): return self.entry['id']
@@ -39,9 +41,11 @@ class RegisteredModel:
     @property
     def display_name(self): return self.entry['display_name']
     @property
-    def path(self): return self.directory/self.entry[self.backend]['filename']
+    def camera_role(self): return self.entry['camera_role']
     @property
-    def digest(self): return self.entry[self.backend]['sha256']
+    def path(self): return self.directory/self.entry['onnx' if self.backend == 'openvino' else self.backend]['filename']
+    @property
+    def digest(self): return self.entry['onnx' if self.backend == 'openvino' else self.backend]['sha256']
 
 
 def read_registry(path=DEFAULT_REGISTRY):
@@ -54,6 +58,8 @@ def read_registry(path=DEFAULT_REGISTRY):
         if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*-v[0-9]+', identifier) or identifier in ids:
             raise ValueError('Invalid or duplicate model ID')
         ids.add(identifier)
+        if model.get('camera_role') not in ('face', 'feet'):
+            raise ValueError('Each model needs camera_role face or feet')
         if type(model.get('enabled')) is not bool or not model.get('display_name') or not model.get('dataset_version'):
             raise ValueError('Missing model version/display/enable metadata')
         if model.get('version') != identifier.rsplit('-',1)[1]:
@@ -85,9 +91,11 @@ def read_registry(path=DEFAULT_REGISTRY):
     return document
 
 
-def model_specs(directory=ROOT/'models', registry=DEFAULT_REGISTRY, backend='onnx', verify=True):
-    if backend not in ('onnx','tensorrt'):
-        raise ValueError('Backend must be onnx or tensorrt')
+def model_specs(directory=ROOT/'models', registry=DEFAULT_REGISTRY, backend='onnx', verify=True, device='GPU'):
+    if backend not in ('onnx','tensorrt','openvino'):
+        raise ValueError('Backend must be onnx, tensorrt or openvino')
+    if device not in ('CPU', 'GPU'):
+        raise ValueError('OpenVINO device must be CPU or GPU')
     directory = Path(directory).resolve()
     if (directory/'.installing').exists():
         raise RuntimeError('Model installation in progress')
@@ -96,9 +104,9 @@ def model_specs(directory=ROOT/'models', registry=DEFAULT_REGISTRY, backend='onn
     for entry in document['models']:
         if not entry['enabled']:
             continue
-        if entry.get(backend) is None:
+        if entry.get('onnx' if backend == 'openvino' else backend) is None:
             raise ValueError(f'{entry["id"]}: build the optional TensorRT engine locally first')
-        spec = RegisteredModel(entry, directory, backend)
+        spec = RegisteredModel(entry, directory, backend, device)
         if verify:
             if not spec.path.is_file():
                 raise FileNotFoundError(f'Missing {spec.path.name}; run python tools/download_models.py')

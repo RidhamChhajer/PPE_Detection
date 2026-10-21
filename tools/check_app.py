@@ -1,4 +1,4 @@
-"""Real upload/status/playback/download smoke test using the portable backend."""
+"""Real upload/status/playback/download smoke test using the selected runtime."""
 import argparse
 import hashlib
 from pathlib import Path
@@ -11,19 +11,27 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+def forbidden_runtime_imports(backend):
+    return ('torch', 'mmdet', 'mmcv') + (('tensorrt',) if backend in ('onnx', 'openvino') else ('onnxruntime',))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
-    parser.add_argument('--registry', type=Path, default=ROOT/'configs/models.json')
+    parser.add_argument('--registry', type=Path)
     parser.add_argument('--models', type=Path, default=ROOT/'models')
+    parser.add_argument('--backend', choices=['auto', 'onnx', 'tensorrt', 'openvino'], default='auto')
+    parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU')
     args = parser.parse_args()
     from app.app import create_app
     from app.registry import model_specs
     from app.video import inspect_video
     from tools.model_run import sha256
-    specs = model_specs(args.models,args.registry)
     runtime = ROOT/'artifacts'/f'api_smoke_{uuid.uuid4().hex}'
-    app = create_app(runtime=runtime,models=args.models,registry=args.registry)
+    app = create_app(runtime=runtime,models=args.models,registry=args.registry,backend=args.backend,device=args.device)
+    selected = app.extensions['inference']['backend']
+    manifest = args.registry or (args.models/'registry.local.json' if selected == 'tensorrt' else ROOT/'configs/models.json')
+    specs = model_specs(args.models, manifest, selected, device=args.device)
     client = app.test_client()
     jobs = app.extensions['video_jobs']
     try:
@@ -76,7 +84,8 @@ def main():
             raise RuntimeError('API output did not preserve input frames/timestamps')
         if result.codec != 'h264' or result.audio_streams or abs(result.duration-original.duration) > max(result.time_base,original.time_base):
             raise RuntimeError('Invalid API video format/duration')
-        if (runtime/identifier/'input.upload').exists() or any(name in sys.modules for name in ('torch','mmdet','mmcv','tensorrt')):
+        forbidden = ('torch', 'mmdet', 'mmcv') if args.backend == 'auto' else forbidden_runtime_imports(selected)
+        if (runtime/identifier/'input.upload').exists() or any(name in sys.modules for name in forbidden):
             raise RuntimeError('Upload cleanup or portable runtime isolation check failed')
         report = (f'PASS: frontend labels {[list(s.labels) for s in specs]}; permanent versioned workflow.\n'
                   f'Upload 202; completed job {identifier}; range playback 206; download 200/hash identical.\n'

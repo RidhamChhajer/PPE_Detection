@@ -97,8 +97,102 @@ def draw_detections(frame, labels, detections, colors=None):
     return frame
 
 
+def pair_footwear(detections, labels):
+    """Suppress duplicate shoe boxes and join only unambiguous pairs per frame.
+
+    This is display-only: a pair is not proof that both shoes belong to one
+    worker. Uncertain matches remain separate; no identity is retained.
+    """
+    # shortcut: proximity cannot prove ownership; upgrade with validated pair labels or person association.
+    if not any('SHOE' in label.upper() for label in labels):
+        return detections
+    rows = list(detections)
+    def values(item):
+        return (item.x1, item.y1, item.x2, item.y2, item.confidence, item.class_id) if isinstance(item, Detection) else item
+    shoes = [i for i, box in enumerate(rows) if 'SHOE' in labels[int(values(box)[5])].upper()]
+
+    def overlap(a, b):
+        x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+        x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+        intersection = max(0, x2-x1) * max(0, y2-y1)
+        area_a, area_b = max(0, a[2]-a[0])*max(0, a[3]-a[1]), max(0, b[2]-b[0])*max(0, b[3]-b[1])
+        if not intersection or min(area_a, area_b) <= 0:
+            return False
+        return (intersection / (area_a + area_b - intersection) >= .55
+                or intersection / min(area_a, area_b) >= .8)
+
+    # NMS in the display layer also removes duplicate boxes with conflicting
+    # classes; preserve the model's highest-confidence classification.
+    kept = []
+    for i in sorted(shoes, key=lambda index: values(rows[index])[4], reverse=True):
+        if not any(overlap(values(rows[i]), values(rows[j])) for j in kept):
+            kept.append(i)
+    kept.sort()
+
+    neighbors = {}
+    for i in kept:
+        a = values(rows[i])
+        choices = []
+        for j in kept:
+            if i == j:
+                continue
+            b = values(rows[j])
+            if int(a[5]) != int(b[5]):
+                continue
+            width = max(a[2]-a[0], b[2]-b[0])
+            height = max(a[3]-a[1], b[3]-b[1])
+            if min(width, height) <= 0:
+                continue
+            center_gap = abs((a[0]+a[2]-b[0]-b[2])/2)
+            dx = center_gap / width
+            dy = abs((a[1]+a[3]-b[1]-b[3])/2) / height
+            if .3 <= dx <= 1.6 and dy <= 1.25 and center_gap <= 1.2 * height:
+                choices.append((dx + .5*dy, j))
+        choices.sort()
+        neighbors[i] = choices
+
+    matches = {}
+    for i in kept:
+        choices = neighbors[i]
+        if not choices:
+            continue
+        score, j = choices[0]
+        other = neighbors[j]
+        # Require reciprocal nearest neighbors and a clear margin to the next
+        # candidate on both sides. Crowded/ambiguous groups stay unpaired.
+        if (other and other[0][1] == i
+                and (len(choices) == 1 or choices[1][0] > score * 1.25)
+                and (len(other) == 1 or other[1][0] > other[0][0] * 1.25)):
+            matches[i] = j
+
+    output = []
+    consumed = set()
+    for i, first in enumerate(rows):
+        if i in consumed or (i in shoes and i not in kept):
+            continue
+        j = matches.get(i)
+        if j is not None and j not in consumed:
+            a, b = values(first), values(rows[j])
+            label = labels[int(a[5])]
+            output.append(Detection(min(a[0],b[0]), min(a[1],b[1]), max(a[2],b[2]),
+                                    max(a[3],b[3]), min(a[4],b[4]), int(a[5]), label))
+            consumed.add(j)
+        else:
+            output.append(first)
+    return output
+
+
+def annotate_frame(pixels, engines):
+    """Run each detector on original pixels, then draw the combined result."""
+    results = [(spec, engine.detect(pixels)) for spec, engine in engines]
+    for spec, boxes in results:
+        draw_detections(pixels, spec.labels, pair_footwear(boxes, spec.labels),
+                        [(0, 220, 0)] * len(spec.labels))
+    return results
+
+
 def process_video(source, destination, models_directory, progress=None, engine_factory=None, statistics=None,
-                  registry=DEFAULT_REGISTRY, backend='onnx', provider='cpu'):
+                  registry=DEFAULT_REGISTRY, backend='onnx', device='GPU'):
     """Run every installed model on every original frame, then verify the output.
 
     engine_factory is injectable for tests; ONNX Runtime is the default backend.
@@ -109,7 +203,7 @@ def process_video(source, destination, models_directory, progress=None, engine_f
         raise ValueError('Input and output must be different files')
     if destination.exists():
         raise FileExistsError('Refusing to overwrite an existing output video')
-    specifications = model_specs(models_directory, registry, backend)
+    specifications = model_specs(models_directory, registry, backend, device=device)
     class_counts = {label: 0 for spec in specifications for label in spec.labels}
 
     def update(stage, count, total):
@@ -126,7 +220,7 @@ def process_video(source, destination, models_directory, progress=None, engine_f
     try:
         with ExitStack() as resources:
             engines = [(spec, resources.enter_context(
-                Detector(spec, provider) if engine_factory is None
+                Detector(spec) if engine_factory is None
                 else engine_factory(spec.path))) for spec in specifications]
             reader = resources.enter_context(av.open(str(source)))
             input_stream = reader.streams.video[0]
@@ -156,11 +250,9 @@ def process_video(source, destination, models_directory, progress=None, engine_f
                     first = timestamp
                 relative = timestamp - first
                 pixels = frame.to_ndarray(format='bgr24')
-                # Every engine sees the same unannotated frame.
-                combined = [(spec, engine.detect(pixels)) for spec, engine in engines]
+                combined = annotate_frame(pixels, engines)
                 for spec, boxes in combined:
                     detections += len(boxes)
-                    draw_detections(pixels, spec.labels, boxes, spec.colors)
                     for box in boxes:
                         class_counts[box.class_label if isinstance(box,Detection) else spec.labels[int(box[5])]] += 1
                 encoded = av.VideoFrame.from_ndarray(pixels, format='bgr24')

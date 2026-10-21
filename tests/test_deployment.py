@@ -1,16 +1,16 @@
-import json
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import numpy as np
 
-from app.detector import (postprocess, model_specs, check_engine_metadata,
-                          engine_identity, CONTRACT)
+from app.detector import (postprocess, check_engine_metadata,
+                          engine_identity)
 from app.video import draw_detections
 from tools.export_tensorrt import compare_detections, fp16_layer
-from tools.install_engine import install_engine
+from tools.export_models import atomic_copy
 from tools.model_run import (best_checkpoint, saved_config, category_ids, sha256,
                              require_evaluation, toml_fields, configure_reference_precision)
 
@@ -20,15 +20,6 @@ class DeploymentTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-
-    def engine(self, directory, name='footwear', labels=('SAFETY_SHOE','NOT_SAFETY_SHOE'), content=b'engine'):
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory/f'{name}.engine'
-        path.write_bytes(content)
-        metadata = dict(label=name, labels=list(labels), num_classes=len(labels),
-                        contract=CONTRACT, status='sample', engine_sha256=sha256(path))
-        path.with_suffix('.toml').write_text(toml_fields(metadata))
-        return path, metadata
 
     def test_multiclass_nms_preserves_overlapping_different_classes(self):
         raw = np.array([[10,10,30,30,.9,.85], [11,11,31,31,.8,.7], [50,50,60,60,.1,.6]])
@@ -49,26 +40,15 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(len(result),1)
         np.testing.assert_allclose(result[0], [10,10,20,20,.8,0])
 
-    def test_multiple_engines_and_labels(self):
-        self.engine(self.root)
-        self.engine(self.root,'goggles',('goggles',))
-        specs = model_specs(self.root)
-        self.assertEqual([s.label for s in specs], ['footwear','goggles'])
-        self.assertEqual(specs[0].labels, ('SAFETY_SHOE','NOT_SAFETY_SHOE'))
-        check_engine_metadata(specs[0], (1,8400,6), engine_identity('footwear',specs[0].labels))
-
-    def test_metadata_rejects_inconsistent_class_count_duplicates_and_order(self):
-        path, metadata = self.engine(self.root)
-        spec = model_specs(self.root)[0]
+    def test_engine_identity_and_output_class_count(self):
+        spec = SimpleNamespace(model_id='footwear-v2', labels=('SAFETY_SHOE', 'NOT_SAFETY_SHOE'),
+                               entry={'tensorrt': {}})
+        name = engine_identity(spec.model_id, spec.labels)
+        check_engine_metadata(spec, (1, 8400, 6), name)
         with self.assertRaisesRegex(ValueError, 'class count'):
-            check_engine_metadata(spec, (1,8400,5), engine_identity(spec.label,spec.labels))
+            check_engine_metadata(spec, (1, 8400, 5), name)
         with self.assertRaisesRegex(ValueError, 'identity'):
-            check_engine_metadata(spec, (1,8400,6), engine_identity(spec.label,tuple(reversed(spec.labels))))
-        for labels, count in [(['A','A'],2), (['A'],2), ([],0), ([3],1), (['A'],True)]:
-            metadata.update(labels=labels,num_classes=count)
-            path.with_suffix('.toml').write_text(toml_fields(metadata))
-            with self.assertRaises(RuntimeError):
-                model_specs(self.root)
+            check_engine_metadata(spec, (1, 8400, 6), engine_identity(spec.model_id, spec.labels[::-1]))
 
     def test_video_draws_actual_class_names(self):
         frame = np.zeros((120,200,3), dtype=np.uint8)
@@ -96,6 +76,18 @@ class DeploymentTests(unittest.TestCase):
         for name in ('/backbone/Conv', '/neck/Conv', '/bbox_head/cls_convs.0.0/conv/Conv', '/bbox_head/rtm_cls.0/Conv'):
             self.assertFalse(fp16_layer(name,'stable_scores'))
         self.assertTrue(fp16_layer('/bbox_head/reg_convs.0.0/conv/Conv','stable_scores'))
+
+    def test_fp32_keeps_regression_and_classification_full_precision(self):
+        for name in ('/backbone/Conv', '/bbox_head/reg_convs.0.0/conv/Conv', '/bbox_head/rtm_cls.0/Conv'):
+            self.assertFalse(fp16_layer(name, 'fp32'))
+            self.assertTrue(fp16_layer(name, 'fp16'))
+
+    def test_parity_reports_score_error_even_when_boxes_match(self):
+        expected = np.array([[1, 1, 10, 10, .8, 0]])
+        actual = expected.copy()
+        actual[0, 4] = .9
+        with self.assertRaisesRegex(RuntimeError, 'assigned score error=0.100000'):
+            compare_detections(expected, actual, 3., .03)
 
     def test_reference_disables_both_tf32_paths(self):
         import importlib.util
@@ -126,8 +118,8 @@ class DeploymentTests(unittest.TestCase):
         selected = self.root/'best_coco_bbox_mAP_epoch_28.pth'
         selected.touch()
         self.assertEqual(best_checkpoint(self.root), selected.resolve())
-        (self.root/'footwear_rtmdet_s.py').touch()
-        self.assertEqual(saved_config(self.root).name, 'footwear_rtmdet_s.py')
+        (self.root/'footwear_rtmdet_l.py').touch()
+        self.assertEqual(saved_config(self.root).name, 'footwear_rtmdet_l.py')
         (self.root/'best_other.pth').touch()
         with self.assertRaises(RuntimeError):
             best_checkpoint(self.root)
@@ -145,53 +137,17 @@ class DeploymentTests(unittest.TestCase):
         receipt.write_text(toml_fields(dict(status='passed',**expected)))
         require_evaluation(self.root, expected)
 
-    def test_install_backup_and_rollback(self):
-        models = self.root/'models'
-        old, _ = self.engine(models,content=b'old')
-        candidate, _ = self.engine(self.root/'candidate',content=b'new')
-        import os
-        original_replace = os.replace
-        def failing_replace(source, destination):
-            if str(destination).endswith('.toml'):
-                raise OSError('injected metadata publication failure')
-            original_replace(source,destination)
-        with patch('tools.install_engine.os.replace',side_effect=failing_replace):
+    def test_atomic_model_copy_preserves_installed_file_on_publication_failure(self):
+        source, target = self.root/'candidate.engine', self.root/'installed.engine'
+        source.write_bytes(b'new')
+        target.write_bytes(b'working')
+        with patch('tools.export_models.os.replace', side_effect=OSError('publication failed')):
             with self.assertRaises(OSError):
-                install_engine(candidate,candidate.with_suffix('.toml'),models,self.root/'backups')
-        self.assertEqual(old.read_bytes(), b'old')
-        self.assertEqual(model_specs(models)[0].engine_sha256,sha256(old))
-        backup = install_engine(candidate,candidate.with_suffix('.toml'),models,self.root/'backups')
-        self.assertEqual((backup/old.name).read_bytes(),b'old')
-        self.assertEqual(old.read_bytes(),b'new')
-
-    def test_readers_reject_install_in_progress(self):
-        self.engine(self.root)
-        (self.root/'.installing').touch()
-        with self.assertRaisesRegex(RuntimeError,'installation'):
-            model_specs(self.root)
-
-    def test_failed_rollback_keeps_readers_blocked_and_backup(self):
-        import os
-        import shutil
-        models = self.root/'models'
-        old, _ = self.engine(models,content=b'old')
-        candidate, _ = self.engine(self.root/'candidate',content=b'new')
-        original_replace, original_copy = os.replace, shutil.copy2
-        def fail_metadata(source, destination):
-            if str(destination).endswith('.toml'):
-                raise OSError('publication failed')
-            original_replace(source,destination)
-        def fail_restore(source, destination):
-            if Path(destination) == old:
-                raise OSError('rollback failed')
-            return original_copy(source,destination)
-        with patch('tools.install_engine.os.replace',side_effect=fail_metadata), patch('tools.install_engine.shutil.copy2',side_effect=fail_restore):
-            with self.assertRaisesRegex(OSError,'rollback failed'):
-                install_engine(candidate,candidate.with_suffix('.toml'),models,self.root/'backups')
-        self.assertTrue((models/'.installing').exists())
-        self.assertEqual(next((self.root/'backups').glob('*/footwear.engine')).read_bytes(),b'old')
-        with self.assertRaisesRegex(RuntimeError,'installation'):
-            model_specs(models)
+                atomic_copy(source, target)
+        self.assertEqual(target.read_bytes(), b'working')
+        self.assertFalse(list(self.root.glob('*.pending')))
+        atomic_copy(source, target)
+        self.assertEqual(target.read_bytes(), b'new')
 
 
 if __name__ == '__main__':

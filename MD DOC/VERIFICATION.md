@@ -1,100 +1,183 @@
-# v1 verification — 26 September 2026
+# Verification
 
-ONNX Runtime CPU is the default; CUDA ORT and local TensorRT are optional.
-No retraining occurred. Paths below are repository-relative.
+## Auto, OpenVINO and flexible cameras - 21 October 2026
 
-## Selected checkpoints and installed assets
+App/full-video commands now default to Auto: probe both models on TensorRT,
+otherwise OpenVINO Intel graphics, otherwise ONNX CPU. Explicit backend choices
+do not fall back. Model weights, thresholds and shoe-pairing logic are unchanged.
+Default shared-bundle setup installs Auto/OpenVINO; NVIDIA builds remain an
+explicit later action on the recipient computer. No HP setup was performed.
 
-| Selected original | SHA-256 |
-| --- | --- |
-| `work_dirs/goggles_merged_fp32/best_coco_bbox_mAP_epoch_32.pth` | `337acd8decbce98623bb82c710bc7e6b19741a9e147407bab3e03d8c1a89d22b` |
-| `work_dirs/footwear_v1_fp32/best_coco_bbox_mAP_epoch_28.pth` | `9835f6d588292a166877c62ff8567c5b7b7b26f8df232df90c51f623e5ea34d2` |
+- OpenVINO 2025.4.1 installed in the local project environment; pip check passed.
+  Intel GPU was discovered automatically. FP32 inference passed all 5 goggles
+  and 34 footwear test images against ONNX, with exact final classes/counts.
+  Maximum final box/score errors: goggles .000489 pixels/.00000489;
+  footwear .00293 pixels/.00000474. No parity tolerances were changed.
+- Real connected webcam/shared mode ran both models on Intel GPU, produced a
+  single combined preview and released the camera cleanly. First processed-frame
+  host capture-to-encoding latency was 1563 ms; frame age was 1672 ms. This is
+  a smoke measurement, not sustained performance or sensor-to-display latency.
+- Browser tests passed face-only, feet-only, same-camera and separate-camera
+  modes, keyboard tabs, disconnect/stop handling, 390px layout and invalid upload.
+  Camera UI fixtures are simulated; real camera capture was checked separately.
+  The actual full 754-frame factory upload also passed playback/download checks.
+- Automatic TensorRT selection and subsequent real inference passed for both
+  models; the shared logger stays alive across probes/jobs. No engines rebuilt.
+- New tests cover OpenVINO CPU parity, Intel-only device selection, automatic
+  fallback/errors, single/shared capture ownership and Windows backend matching.
+  Full Python regression suite: **92 tests passed**.
+- Python compilation, JavaScript syntax, PowerShell script parsing, design
+  YAML/token checks and source link checks passed. Strict UI scanner ran; its
+  external-handler/native-select false positives remain as documented below.
 
-Originals remain unchanged; release checkpoint copies are byte-identical.
-Neither deployment uses epoch 40.
+Two physical Arducams, sustained load, independent industrial accuracy and the
+final HP/RTX 3050 environment still require validation on that hardware.
+
+## Group Windows deployment bundle - 21 October 2026
+
+The requested replacement delivery is release_assets/industry/PPE_Detection_Windows.zip.
+It contains both hash-verified ONNX models, selected .pth checkpoints and resolved
+configs, 39 verification images (5 goggles, 34 footwear), application source,
+dependency manifests and deployment/setup.ps1 + start.ps1. Installed dependencies,
+the sender's virtual environment and current GPU engines are excluded.
+
+The optional -Backend tensorrt setup builds/checks engines on the recipient
+GPU only. It checks all bundled images against ONNX with the existing raw-output
+and one-to-one final-detection tolerances. Goggles FP16 may fall back to FP32;
+footwear starts FP32. Both candidates must pass before the local registry changes.
+Failed setup preserves the prior registry and engines. This setup needs no training
+dataset, MMDetection or PyTorch. CPU setup validates the included ONNX models.
+
+All **83 Python tests passed**, including engine setup failure/commit behavior,
+FP32 fallback, raw parity rejection, bundle input tampering and asset selection.
+PowerShell setup/start parsing and Python compilation also passed. Tests use fake
+GPU builders: no actual HP build or development-PC engine rebuild occurred.
+The archive builder hashes every delivered file and rechecks each ZIP entry.
+Recipient-PC driver compatibility and physical camera performance remain untested.
+
+## Two-camera software and source handoff - 21 October 2026
+
+Both RTMDet-L models and existing engine files are unchanged. The local registry
+now carries face/feet routing. At that stage app/CLI defaulted to TensorRT; CPU was explicit and
+uses optional requirements-cpu.txt. No HP TensorRT configuration was performed.
+
+- Full Python suite, including training-stack tests: **78 tests passed** in the
+  final run, including handoff/default-selection and worker-start cleanup checks.
+  Windows sandbox denied atomic replacement of temporary files, so verification
+  was rerun outside the sandbox and passed. Validation was not weakened.
+- Browser smoke: tabs/keyboard switching, duplicate device rejection, simultaneous
+  previews, per-feed failure, stop controls, 390px layout and invalid upload passed.
+  Camera API responses were simulated for UI tests; Python tests separately exercise
+  two capture workers and one inference worker with distinguishable fake frames.
+- Real TensorRT browser upload of the complete Previous/input_videos factory clip
+  passed processing, player display and download. Both models ran. Saved output
+  is artifacts/app/6d48a181ac4d43dd991d496697bad8c1/output.mp4 (local-only, expires).
+  The processing function verified all 754 frames, dimensions and presentation
+  timestamps; output is silent H.264. The browser test did not certify visual
+  accuracy. Screenshots are artifacts/browser/two-cameras-desktop.png and
+  two-cameras-mobile.png and use simulated camera images.
+- Python compilation, JavaScript syntax and pip dependency checks passed.
+- Source allowlist/link/history audit passed: no historical binary/private/large
+  file candidates and no historical credential-pattern matches. Historical path
+  references remain in Git; the source-only ZIP excludes Git history. Current
+  path findings were reviewed as examples or standard system executable paths.
+- Strict premium UI audit ran. Four reported actionless buttons are static-tool
+  false positives: this scanner recognizes inline HTML handlers but not the
+  external addEventListener bindings required by our CSP. Browser tests exercise
+  tabs, refresh and stop actions. Native select ownership is explicitly recorded
+  in CAMERA_INTEGRATION.md. No inline-handler workaround was introduced.
+- The external DESIGN.md npm validator was blocked by automatic approval review
+  for unverified elevated package execution. Local YAML/token/section checks and
+  actual browser checks are used instead; official validator success is not claimed.
+
+Physical two-Arducam testing, HP driver/runtime setup, engine rebuild/parity and
+end-to-end <=3-second measurements remain deferred. No missing-PPE alerts or
+cross-camera worker matching was added.
+
+The source-only delivery was superseded by the code+models Windows deployment
+bundle. See deployment/START_HERE.md for recipient-PC setup. Existing development
+engines remain unchanged; target-PC engine building is deferred until extraction.
+
+## RTMDet-L v2 verification - 27 September 2026
+
+Both trained Kaggle models are installed. No retraining occurred. All paths below are repository-relative. Original ZIPs in Previous, datasets, historical checkpoints and logs were preserved.
+
+## Selected models and hashes
+
+| Model | Best checkpoint | SHA-256 |
+| --- | --- | --- |
+| goggles-v2 | work_dirs/goggles_rtmdet_l_v2/best_coco_bbox_mAP_epoch_28.pth | f5862021fc0101f82b5fd8bb97ec6ec795ed6574e8e894412615758bed322231 |
+| footwear-v2 | work_dirs/footwear_rtmdet_l_v2/best_coco_bbox_mAP_epoch_14.pth | 50d4d203742e72c9a410fbd0000737e1b713b0e5e0c304ee8395b1346e26009b |
 
 | Installed asset | SHA-256 |
 | --- | --- |
-| `models/goggles-v1.onnx` | `9ded9b32518962346b4a4f2fbb5878de6ced68e03b44062c2265e23721214827` |
-| `models/footwear-v1.onnx` | `dfa96fdce8525ceb90ceb116ebfb8b761c96e91f6e5e58d5e8da30a9eca9ec96` |
-| `models/goggles-v1.engine` | `e1726835e1abb93c127c86e9b5ca5348aeb24e4bc9f4148f11822da0ab8de8aa` |
-| `models/footwear-v1.engine` | `89576983cd514d836b0dc5d1b9e3ec8389a0591c4e3bd0f5eebfa233ac7b8e97` |
+| models/goggles-v2.onnx | fddd119d3865ecda103b8ba65e79497d8f49780e93161493941fa3bb3cb456d8 |
+| models/goggles-v2.engine | 9114527ddc2b69a73ea18227aa88d9fb90a08cb6c087262da8dd42222529d2ac |
+| models/footwear-v2.onnx | 3af7410bec4e2424ca2a764017a5d81cf74d8a4df5331092b4dc28fd7bc84a8e |
+| models/footwear-v2.engine | 12466da0a3ec3b215a304a0f5a92682ea0b4e6e3772bb224c2529f2c1676813b |
 
-Registry: `configs/models.json`; local TensorRT registry:
-`models/registry.local.json`. Existing RTX 2050 engines were reused with fresh
-parity checks, not rebuilt: FP16 goggles and mixed-precision stable-score footwear.
-Engines are not release assets. Rebuild and verify on the final RTX 3050.
+Public metadata: configs/models.json. Local TensorRT metadata: models/registry.local.json. Goggles uses FP16; footwear uses FP32 with TF32 disabled. Footwear FP16 failed detection-count parity; mixed stable_scores failed final box/confidence matching. Neither failed candidate was installed. Tolerances were not relaxed.
 
 ## Evaluation and parity
 
-Both selected checkpoints were evaluated on their validation and test splits in
-FP32 with TF32 disabled. Reports, previews and `verified.toml` remain in each
-run's `evaluation/`. Complete metrics are in [Models](MODELS.md).
-Test AP50 / COCO mAP: goggles **0.6747 / 0.2452**; footwear overall
-**0.4971 / 0.2851**; SAFETY_SHOE **0.6617 / 0.3995**;
-NOT_SAFETY_SHOE **0.3324 / 0.1707**. Small splits do not establish field accuracy.
+Validation/test evaluation and previews are in each new run's evaluation directory. Full overall and per-class results are in [Models](MODELS.md). Test mAP50-95: goggles 0.1563; footwear 0.1761; SAFETY_SHOE 0.2273; NOT_SAFETY_SHOE 0.1249. These development results do not establish field accuracy. Both overall scores are below the earlier RTMDet-S results.
 
-ONNX checker passed both models. All 39 test images passed PyTorch comparisons,
-including raw scores/boxes and final class-aware NMS. Classes/counts matched
-exactly: goggles 5 detections over 5 images; footwear 53 SAFETY_SHOE and 6
-NOT_SAFETY_SHOE over 34 images.
+Both ONNX and TensorRT passed every test image (5 goggles, 34 footwear), with exact final class IDs/counts and class-aware NMS. Counts: 9 goggles, 68 SAFETY_SHOE, 7 NOT_SAFETY_SHOE.
 
-| Backend/model | Max raw box error (px) | Raw score error | Final box error (px) | Final score error |
+| Model/backend | Max raw box error | Raw score error | Final box error | Final score error |
 | --- | ---: | ---: | ---: | ---: |
-| ONNX goggles | 0.000504 | 0.00001729 | 0.0000611 | 0.00001431 |
-| ONNX footwear | 0.004700 | 0.00001395 | 0.001709 | 0.00000814 |
-| TensorRT goggles | 0.478241 | 0.003753 | 0.094147 | 0.002864 |
-| TensorRT footwear | 0.531388 | 0.00014192 | 1.689209 | 0.00010592 |
+| goggles-v2/onnx | 0.00163269 | 0.00000617 | 0.00027466 | 0.00000283 |
+| goggles-v2/tensorrt | 1.00042725 | 0.00527817 | 0.14144897 | 0.00382590 |
+| footwear-v2/onnx | 0.00231934 | 0.00002739 | 0.00274658 | 0.00000262 |
+| footwear-v2/tensorrt | 0.00148010 | 0.00002889 | 0.00195312 | 0.00000259 |
 
-All configured tolerances passed before installation. Detailed records:
-`release_assets/v1/*-provenance.json` and each run's `evaluation/*-parity.json`.
+Full provenance: release_assets/v2/*-provenance.json and work_dirs/*_rtmdet_l_v2/evaluation/*-parity.json.
 
-## Automated and clean-install checks
+## Automated verification
 
-- Full suite: **58 tests passed**, 4.362 seconds.
-- Main and isolated runtime-only environments: `pip check` passed.
-- Both configurations and input pipelines passed without training. Goggles
-  train/valid/test: 148/28/5 images; footwear: 161/35/34.
-- Goggles training retains 5 negative images; footwear negatives: 2/1/1.
-  Negative crops remain supported. FP32, learning rate 0.0001, clipping 10 and
-  immediate non-finite loss/gradient rejection remain in training.
-- Clean source snapshot installed runtime requirements only, downloaded both
-  hash-verified ONNX models, ran real inference, a three-frame video and frontend
-  GET. No datasets/checkpoints needed; no PyTorch/MMDetection/MMCV/TensorRT imports.
+- 64 automated tests passed. pip check: no broken requirements.
+- Both RTMDet-L configuration and input-pipeline checks passed without fitting weights. Goggles train/valid/test: 148/28/5; footwear: 161/35/34. Negative images and negative crops remain supported.
+- All 603 local dataset files matched the Kaggle package manifest hashes.
+- Runtime-only ONNX inference, generated video and frontend smoke passed without importing PyTorch, MMDetection, MMCV or TensorRT.
+- Source packaging and documentation links passed. Training dependency tests remain optional for runtime-only installations.
 
-## Full-video and frontend checks
+## Full-video verification
 
-`local/media/factory_video.mp4` → `artifacts/v1/factory_onnx.mp4`:
-**754 frames, 480 × 864, 60.014062 FPS, 12.563722 seconds**, silent H.264.
-Every presentation timestamp matched. Detections: goggles 504, SAFETY_SHOE 549,
-NOT_SAFETY_SHOE 27 (1080 total). CPU elapsed approximately 353 seconds;
-this is not realtime throughput.
+```text
+PASS: 754 frames; 480x864; 60.014062 FPS; 12.563722 seconds; 1960 detections; elapsed 98.6s; no PyTorch.
+Preserved all presentation timestamps: True
+Codec: h264; audio streams: 0; detections by class: {'goggles': 826, 'SAFETY_SHOE': 1092, 'NOT_SAFETY_SHOE': 42}
+Output: outputs\factory_rtmdet_l_v2_20260927.mp4
+```
 
-API independently completed the entire video with both models: upload 202,
-completed job, range playback 206, download 200 with matching hash, upload cleanup.
-Report: `artifacts/api_smoke_6b6a7b74041a434c9ea4d3c97df53dfd/smoke.txt`.
+98.6 seconds is measured end-to-end processing time on the current machine, not realtime throughput. Output preserves all source frames and timestamps.
 
-The stale frontend server was restarted. Browser now shows both versioned models
-and the permanent limitation notice. Actual browser upload completed with playback
-and download: 3 frames, 64 × 48, 25 FPS, 0.12 s;
-job `35cd12f2e509457aa74b83ee2709a6b0`. Server remains at localhost:8765.
+## Frontend and API verification
 
-## Cleanup and publication
+```text
+PASS: frontend labels [['goggles'], ['SAFETY_SHOE', 'NOT_SAFETY_SHOE']]; permanent versioned workflow.
+Upload 202; completed job 9162c815ca3f47ca874c64ed90b08369; range playback 206; download 200/hash identical.
+754 frames; 480x864; 60.014062 FPS; 12.563722 s; all timestamps preserved; silent H.264.
+No PyTorch imported; input removed; output: artifacts\api_smoke_9207ffae587a45ffa037aadaa8257f09\9162c815ca3f47ca874c64ed90b08369\output.mp4
+```
 
-See [Cleanup](CLEANUP.md) for removed and preserved paths. Release assets, source
-bundle, suggested notes and SHA256SUMS are under `release_assets/v1`.
-Inventory: `local/release_inventory.json`. No commit, push or history rewrite.
+This checks frontend HTML and the actual API workflow. Interactive browser playback controls were not separately exercised. The smoke-test service is closed; no server was left running.
 
-Read-only audit found zero historical large/model/private-media objects and zero
-supported credential-pattern matches. This is not proof that all secrets are absent.
-Five historical absolute-path references remain: `DATA_COLLECTION.md` lines 35/38,
-`README.md` line 20, `TRAINING_STABILITY.md` line 66,
-`tools/check_environment.py` line 76. Path-only audit: `local/publication_audit.json`.
-`.gitignore` does not remove history. No sensitive-history cleanup was identified.
+## Changed files and cleanup
 
-Repository: https://github.com/RidhamChhajer/PPE_Detection. Before public release,
-choose a license (MIT is an option; none assigned), review redistribution rights,
-authorize publishing, and set the registry's single `release_base_url` to the real
-published release. Local file-URL download is verified. Unseen workers/sites,
-camera conditions and final hardware still require field validation. This is not
-a safety certification system.
+- configs/*_rtmdet_l.py, tools/train.py and tools/check_environment.py: RTMDet-L defaults; obsolete RTMDet-S training configs removed.
+- configs/models.json: v2 identifiers, RTMDet-L architecture, development qualification and verified hashes. Old v1 release URL cleared so downloads cannot silently use old models.
+- tools/localize_run.py: preserves original Kaggle configs while adapting local paths and workers. Original configs remain under each new run/original/.
+- tools/export_models.py and tools/export_tensorrt.py: architecture-neutral release filenames, preserved dataset version/qualification, explicit FP32 fallback, recorded precision/hashes and actionable parity diagnostics.
+- tools/check_app.py: TensorRT API smoke support while rejecting training-framework imports.
+- tools/prepare_repository.py: v2 release defaults and Kaggle scripts in source packages.
+- tests/test_rtmdet_l.py, tests/test_deployment.py and tests/test_training_stability.py: architecture, migration, qualification, precision fallback and parity regressions.
+- README.md and the Models, Training, Export and Deployment, Verification and Cleanup guides updated.
+
+Removed obsolete v1 engines/ONNX files from models, artifacts/versioned_export/goggles-v1, artifacts/versioned_export/footwear-v1 and artifacts/v1. Cleanup inventory: artifacts/rtmdet_l_cleanup_inventory.json. Historical training runs and release_assets/v1 remain as records of the previous trained/released models; they are not loaded by the application.
+
+## Remaining manual work
+
+- Review annotated footage and independent recordings; measure false positives and missed PPE under real camera conditions. Larger architecture did not improve these small test splits.
+- Rebuild and verify TensorRT engines on the final RTX 3050. Existing engines are specific to the current GPU/TensorRT installation.
+- Publish a new GitHub release for v2 artifacts and then set release_base_url to its real asset URL. Nothing was committed, pushed or published by this migration.

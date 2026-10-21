@@ -3,10 +3,10 @@
 Register the version, class order and selected checkpoint hash, then evaluate:
 
 ```powershell
-python tools/evaluate.py --model-id goggles-v1 --run-dir work_dirs/goggles_merged_fp32
-python tools/evaluate.py --model-id footwear-v1 --run-dir work_dirs/footwear_v1_fp32
-python tools/export_models.py --model-id goggles-v1 --run-dir work_dirs/goggles_merged_fp32
-python tools/export_models.py --model-id footwear-v1 --run-dir work_dirs/footwear_v1_fp32
+python tools/evaluate.py --model-id goggles-v2 --run-dir work_dirs/goggles_rtmdet_l_v2
+python tools/evaluate.py --model-id footwear-v2 --run-dir work_dirs/footwear_rtmdet_l_v2
+python tools/export_models.py --model-id goggles-v2 --run-dir work_dirs/goggles_rtmdet_l_v2
+python tools/export_models.py --model-id footwear-v2 --run-dir work_dirs/footwear_rtmdet_l_v2
 ```
 
 Only the unique best checkpoint is selected. An explicit different checkpoint
@@ -36,21 +36,23 @@ Parity requires exact final class/count results and one-to-one matches: raw boxe
 original pixels and scores <=.03. Native MMDetection/adapter agreement is
 <=.05 pixels/.0001 score. Both PyTorch TF32 paths and builder TF32 are disabled.
 
-## TensorRT, optional and local
+## TensorRT, Auto's preferred backend when usable engines are installed
 
 Stop the app; build one model at a time on the target GPU:
 
 ```powershell
-python tools/export_models.py --model-id goggles-v1 --run-dir work_dirs/goggles_merged_fp32 --build-tensorrt
-python tools/export_models.py --model-id footwear-v1 --run-dir work_dirs/footwear_v1_fp32 --build-tensorrt --precision stable_scores
+python tools/export_models.py --model-id goggles-v2 --run-dir work_dirs/goggles_rtmdet_l_v2 --build-tensorrt
+python tools/export_models.py --model-id footwear-v2 --run-dir work_dirs/footwear_rtmdet_l_v2 --build-tensorrt --precision fp32
 python -m app.app --backend tensorrt --registry models/registry.local.json
 ```
 
-Goggles uses FP16. Footwear needs `stable_scores`: FP32 shared/classification
-layers, FP16 regression convolutions. All-FP16 crossed the confidence threshold
-and failed parity; tolerances were not relaxed. Hashes/embedded labels are checked.
+Goggles v2 passes FP16 parity. Footwear v2 failed both FP16 and `stable_scores` (FP32 classification with FP16 regression), so use `--precision fp32`. Every build must still pass the same full test-set checks; never relax tolerances to install a failing candidate. FP32 also disables TensorRT TF32.
 Failure preserves installed assets. Engines are excluded from releases; rebuild
-and reverify on the final RTX 3050. See [Installation](INSTALLATION.md).
+and reverify on the final RTX 3050 in the deferred HP setup phase. See
+[Installation](INSTALLATION.md). CPU mode is explicit: `python -m app.app --backend onnx`.
+ONNX Runtime is optional for the app but required by export parity verification;
+requirements-export.txt includes it. Both registry versions preserve each model's
+camera_role so engine installation cannot lose live-camera routing.
 
 ## Upgrading
 

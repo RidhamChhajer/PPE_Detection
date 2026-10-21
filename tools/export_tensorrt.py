@@ -74,10 +74,12 @@ def export(checkpoint, cfg, path):
 
 def fp16_layer(name, precision):
     """Stable-score mode keeps shared features and classification in FP32."""
-    return precision == 'fp16' or name.startswith('/bbox_head/reg_convs.')
+    return precision == 'fp16' or (precision == 'stable_scores' and name.startswith('/bbox_head/reg_convs.'))
 
 
 def build(onnx_path, engine_path, name, labels, precision):
+    if precision not in ('fp16', 'stable_scores', 'fp32'):
+        raise ValueError('Unsupported TensorRT precision')
     import tensorrt as trt
     logger = trt.Logger(trt.Logger.INFO)
     builder = trt.Builder(logger)
@@ -86,12 +88,13 @@ def build(onnx_path, engine_path, name, labels, precision):
     if not parser.parse(onnx_path.read_bytes()):
         raise RuntimeError('\n'.join(str(parser.get_error(i)) for i in range(parser.num_errors)))
     network.name = engine_identity(name, labels)
-    if not builder.platform_has_fast_fp16:
+    if precision != 'fp32' and not builder.platform_has_fast_fp16:
         raise RuntimeError('FP16 acceleration unavailable')
     config = builder.create_builder_config()
-    config.set_flag(trt.BuilderFlag.FP16)
+    if precision != 'fp32':
+        config.set_flag(trt.BuilderFlag.FP16)
     config.clear_flag(trt.BuilderFlag.TF32)
-    if precision == 'stable_scores':
+    if precision in ('stable_scores', 'fp32'):
         config.set_flag(trt.BuilderFlag.OBEY_PRECISION_CONSTRAINTS)
         for index in range(network.num_layers):
             layer = network.get_layer(index)
@@ -110,7 +113,7 @@ def build(onnx_path, engine_path, name, labels, precision):
     if engine is None:
         raise RuntimeError('TensorRT build failed')
     engine_path.write_bytes(bytes(engine))
-    print('FP16 candidate built; not installed.', flush=True)
+    print(f'{precision} candidate built; not installed.', flush=True)
 
 
 def compare_detections(reference, actual, box_limit, score_limit):
@@ -131,7 +134,10 @@ def compare_detections(reference, actual, box_limit, score_limit):
         valid = (boxes <= box_limit) & (scores <= score_limit)
         row, col = linear_sum_assignment(np.where(valid, boxes/max(box_limit,1e-9)+scores/max(score_limit,1e-9), 1e9))
         if not valid[row,col].all():
-            raise RuntimeError(f'Post-NMS class {label} boxes/confidences exceed tolerance: box={boxes.min(axis=1).max():.6f}')
+            raise RuntimeError(f'Post-NMS class {label} has no one-to-one match within '
+                               f'box<={box_limit}px and score<={score_limit}; '
+                               f'assigned box error={boxes[row,col].max():.6f}, '
+                               f'assigned score error={scores[row,col].max():.6f}')
         maximum_box = max(maximum_box, float(boxes[row,col].max()))
         maximum_score = max(maximum_score, float(scores[row,col].max()))
     return maximum_box, maximum_score

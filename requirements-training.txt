@@ -1,4 +1,5 @@
 -r requirements-runtime.txt
+tomli==2.4.1
 torch==2.1.2
 torchvision==0.16.2
 mmengine==0.10.7

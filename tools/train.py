@@ -1,4 +1,4 @@
-"""Fine-tune RTMDet-S in the single project environment; supports resuming."""
+"""Fine-tune RTMDet-L in the single project environment; supports resuming."""
 import argparse
 import os
 from pathlib import Path
@@ -10,11 +10,11 @@ sys.path.insert(0, str(ROOT))
 TASKS = {
     'goggles': {
         'classes': ('goggles',),
-        'config': ROOT / 'configs/goggles_rtmdet_s.py',
+        'config': ROOT / 'configs/goggles_rtmdet_l.py',
     },
     'footwear': {
         'classes': ('SAFETY_SHOE', 'NOT_SAFETY_SHOE'),
-        'config': ROOT / 'configs/footwear_rtmdet_s.py',
+        'config': ROOT / 'configs/footwear_rtmdet_l.py',
     },
 }
 
@@ -107,7 +107,7 @@ def main():
         str(args.pretrained.resolve()) if args.pretrained else cfg.load_from)
     cfg.model_version = args.model_version
     cfg.dataset_version = f'{args.task} dataset {args.dataset_version}'
-    cfg.pop('data_regime', None)
+    # Keep any declared dataset qualification in the saved training recipe.
     cfg.max_epochs = cfg.train_cfg.max_epochs = args.epochs
     cfg.param_scheduler[1].end = args.epochs
     cfg.param_scheduler[1].T_max = args.epochs - 4

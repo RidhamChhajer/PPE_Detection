@@ -31,7 +31,7 @@ def main():
             for packet in stream.encode(): writer.mux(packet)
         original,result,_=process_video(source,directory/'result.mp4',ROOT/'models')
         assert result.frames==3 and result.timeline_hash==original.timeline_hash
-        app=create_app(runtime=directory/'jobs')
+        app=create_app(runtime=directory/'jobs', backend='onnx')
         assert app.test_client().get('/').status_code==200
         app.extensions['video_jobs'].close()
     assert not any(name in sys.modules for name in ('torch','mmcv','mmdet','tensorrt'))

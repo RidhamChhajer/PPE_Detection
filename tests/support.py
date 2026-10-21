@@ -26,7 +26,7 @@ def registry_fixture(root, names=('goggles-v1',), labels=None, real=False):
             helper.set_model_props(model,dict(contract=CONTRACT,model_id=name,labels=json.dumps(classes)))
             onnx.save(model,str(path))
         else: path.write_bytes(b'test')
-        models.append(dict(id=name,display_name=name,version=name.rsplit('-',1)[1],enabled=True,labels=classes,
+        models.append(dict(id=name,display_name=name,camera_role='feet' if name.startswith('footwear') else 'face',version=name.rsplit('-',1)[1],enabled=True,labels=classes,
             colors=[[0,255,0] for _ in classes],input_size=[640,640],confidence_threshold=.3,nms_iou_threshold=.65,
             dataset_version='test dataset v1',backends=['onnx','tensorrt'],contract=CONTRACT,
             onnx=dict(filename=path.name,sha256=sha256(path)),checkpoint=dict(filename=name+'.pth',sha256='0'*64),tensorrt=None))

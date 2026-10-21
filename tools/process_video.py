@@ -13,11 +13,16 @@ def main():
     parser.add_argument('source', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--models', type=Path, default=ROOT / 'models')
-    parser.add_argument('--registry', type=Path, default=ROOT/'configs/models.json')
-    parser.add_argument('--backend', choices=['onnx','tensorrt'], default='onnx')
-    parser.add_argument('--provider', choices=['cpu','cuda'], default='cpu')
+    parser.add_argument('--registry', type=Path)
+    parser.add_argument('--backend', choices=['auto','onnx','tensorrt','openvino'], default='auto')
+    parser.add_argument('--device', choices=['CPU','GPU'], default='GPU')
     args = parser.parse_args()
     from app.video import process_video
+    from app.runtime import select_runtime
+    _, registry, selected = select_runtime(args.models, args.registry, args.backend, args.device)
+    print(f"Inference: {selected['backend']} / {selected['device']}", flush=True)
+    for reason in selected['fallback_reasons']:
+        print(f'Auto skipped {reason}', flush=True)
     last_stage = None
 
     def progress(stage, count, total):
@@ -29,7 +34,7 @@ def main():
     started = time.perf_counter()
     statistics = {}
     original, output, detections = process_video(args.source, args.output, args.models, progress, statistics=statistics,
-                                                registry=args.registry, backend=args.backend, provider=args.provider)
+                                                registry=registry, backend=selected['backend'], device=args.device)
     if 'torch' in sys.modules:
         raise RuntimeError('Production processing unexpectedly imported PyTorch')
     print(f'PASS: {output.frames} frames; {output.width}x{output.height}; '

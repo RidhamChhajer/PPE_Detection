@@ -73,7 +73,10 @@ def verify(checkpoint,cfg,entry,directory,backend='onnx'):
             native_boxes[:,[1,3]] = native_boxes[:,[1,3]].clip(0,frame.shape[0])
             compare_detections(np.column_stack([native_boxes,native.scores.numpy(),native.labels.numpy()]),expected,.05,.0001)
             detected = postprocess(actual,scales,frame.shape)
-            box,score = compare_detections(expected,detected,3.,.03)
+            try:
+                box,score = compare_detections(expected,detected,3.,.03)
+            except RuntimeError as error:
+                raise RuntimeError(f'{backend} parity failed on {record["file_name"]}: {error}') from error
             maxima['final_box'],maxima['final_score'] = max(maxima['final_box'],box),max(maxima['final_score'],score)
             counts += np.bincount(detected[:,5].astype(int),minlength=len(counts))
     if maxima['raw_box'] > 2. or maxima['raw_score'] > .03:
@@ -85,9 +88,9 @@ def portable_config(cfg,model_id):
     """Resolved release recipe; original saved config remains untouched."""
     cfg = copy.deepcopy(cfg)
     task = model_id.rsplit('-v',1)[0]
-    cfg.pop('data_regime',None)
+    # Preserve training data qualification.
     cfg.model_version = model_id.rsplit('-',1)[1]
-    cfg.dataset_version = task+' dataset '+cfg.model_version
+    # Model revisions do not imply a new dataset revision.
     cfg.work_dir = f'work_dirs/{model_id}'
     cfg.load_from = f'{model_id}.pth'
     cfg.resume = False
@@ -106,13 +109,13 @@ def main():
     parser.add_argument('--checkpoint',type=Path)
     parser.add_argument('--config',type=Path,help='Resolved release configuration')
     parser.add_argument('--registry',type=Path,default=DEFAULT_REGISTRY)
-    parser.add_argument('--release-dir',type=Path,default=ROOT/'release_assets/v1')
+    parser.add_argument('--release-dir',type=Path,default=ROOT/'release_assets/v2')
     parser.add_argument('--models',type=Path,default=ROOT/'models')
     parser.add_argument('--reuse-onnx',type=Path,help='Reuse a previous export after checker and full parity verification')
     parser.add_argument('--tensorrt-engine',type=Path,help='Verify a locally built engine against this checkpoint')
     parser.add_argument('--tensorrt-identity',help='Embedded identity of a pre-registry local engine')
     parser.add_argument('--build-tensorrt',action='store_true')
-    parser.add_argument('--precision',choices=['fp16','stable_scores'],default='fp16')
+    parser.add_argument('--precision',choices=['fp16','stable_scores','fp32'],default='fp16')
     args = parser.parse_args()
     os.chdir(ROOT)
     checkpoint,config_path,cfg,labels = load_run(args.run_dir,args.checkpoint,args.config)
@@ -135,6 +138,8 @@ def main():
     onnx.save(graph,str(onnx_path))
     entry['onnx']['sha256'] = sha256(onnx_path)
     report = dict(model_id=args.model_id,dataset_version=entry['dataset_version'],checkpoint_filename=checkpoint.name,
+                  architecture=entry.get('architecture', 'rtmdet'),
+                  qualification=entry.get('qualification', 'not field-qualified'),
                   **provenance,onnx_sha256=entry['onnx']['sha256'])
     report['onnx_parity'] = verify(checkpoint,cfg,entry,candidates)
     if args.build_tensorrt or args.tensorrt_engine:
@@ -145,12 +150,15 @@ def main():
             command = [sys.executable,'-c','from pathlib import Path; from tools.export_tensorrt import build; import sys,json; build(Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3],json.loads(sys.argv[4]),sys.argv[5])',str(onnx_path),str(engine_path),args.model_id,json.dumps(labels),args.precision]
             subprocess.run(command,check=True)
         else: atomic_copy(args.tensorrt_engine,engine_path)
-        entry['tensorrt'] = dict(filename=engine_path.name,sha256=sha256(engine_path),identity=args.tensorrt_identity or args.model_id)
+        entry['tensorrt'] = dict(filename=engine_path.name,sha256=sha256(engine_path),identity=args.tensorrt_identity or args.model_id,
+                               precision=args.precision if args.build_tensorrt else 'external')
+        report['tensorrt_precision'] = entry['tensorrt']['precision']
+        report['engine_sha256'] = entry['tensorrt']['sha256']
         report['tensorrt_parity'] = verify(checkpoint,cfg,entry,candidates,'tensorrt')
     # Every candidate must pass before any existing installed file is replaced.
     args.release_dir.mkdir(parents=True,exist_ok=True)
     atomic_copy(checkpoint,args.release_dir/entry['checkpoint']['filename'])
-    portable_config(cfg,args.model_id).dump(str(args.release_dir/f'{args.model_id}_rtmdet_s.py'))
+    portable_config(cfg,args.model_id).dump(str(args.release_dir/f'{args.model_id}_rtmdet.py'))
     atomic_copy(onnx_path,args.release_dir/onnx_path.name)
     atomic_copy(onnx_path,args.models/onnx_path.name)
     if entry.get('tensorrt'):

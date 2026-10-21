@@ -42,7 +42,7 @@ class StabilityTests(unittest.TestCase):
 
     def test_both_resolved_configs_build_fp32_wrapper(self):
         for task in ('goggles', 'footwear'):
-            cfg = Config.fromfile(str(ROOT/f'configs/{task}_rtmdet_s.py'))
+            cfg = Config.fromfile(str(ROOT/f'configs/{task}_rtmdet_l.py'))
             model = TinyModel()
             wrapper = build_optim_wrapper(model, cfg.optim_wrapper)
             self.assertIsInstance(wrapper, FiniteOptimWrapper)
@@ -113,10 +113,10 @@ class StabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for task in ('goggles', 'footwear'):
-                check_run_directory(root/'new', False, f'{task}_rtmdet_s.py')
+                check_run_directory(root/'new', False, f'{task}_rtmdet_l.py')
             (root/'unrelated.pth').touch()
             with self.assertRaisesRegex(ValueError, 'not empty'):
-                check_run_directory(root, False, 'footwear_rtmdet_s.py')
+                check_run_directory(root, False, 'footwear_rtmdet_l.py')
 
     def test_resume_uses_run_checkpoint_not_pretrained_weights(self):
         with tempfile.TemporaryDirectory() as temporary:

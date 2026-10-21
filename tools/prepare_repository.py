@@ -10,14 +10,18 @@ import zipfile
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
-ALLOWED_DIRS = ('app','configs','tools','tests','MD DOC','.github')
-SUFFIXES = {'.py','.html','.css','.js','.json','.md','.yml','.yaml','.ps1'}
+ALLOWED_DIRS = ('app','configs','tools','tests','MD DOC','.github','kaggle','deployment')
+SUFFIXES = {'.py','.html','.css','.js','.cjs','.json','.md','.yml','.yaml','.ps1','.sh'}
 
 
 def source_files():
-    files = [ROOT/'README.md',ROOT/'.gitignore',*ROOT.glob('requirements-*.txt')]
+    files = [ROOT/'README.md',ROOT/'DESIGN.md',ROOT/'.gitignore',*ROOT.glob('requirements-*.txt'),
+             *ROOT.glob('deployment/requirements-*.txt')]
     for directory in ALLOWED_DIRS:
         files += [p for p in (ROOT/directory).rglob('*') if p.is_file() and p.suffix in SUFFIXES and '__pycache__' not in p.parts]
+    for path in files:
+        if path.is_symlink() or not path.resolve().is_relative_to(ROOT.resolve()):
+            raise ValueError(f'Source path escapes the project: {path.name}')
     return sorted(set(files))
 
 
@@ -73,13 +77,15 @@ def check_links(files):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--snapshot',type=Path)
-    parser.add_argument('--release-dir',type=Path,default=ROOT/'release_assets/v1')
+    parser.add_argument('--release-dir',type=Path,default=ROOT/'release_assets/v2')
     args=parser.parse_args()
     files=source_files()
     check_links(files)
     result=audit(files)
     (ROOT/'local').mkdir(exist_ok=True)
     (ROOT/'local/publication_audit.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+    if any(record['kind'] == 'potential_secret' for record in result['current_findings']):
+        raise ValueError('Source may contain credentials; inspect local/publication_audit.json before sharing')
     args.release_dir.mkdir(parents=True,exist_ok=True)
     with zipfile.ZipFile(args.release_dir/'source.zip','w',zipfile.ZIP_DEFLATED) as archive:
         for path in files: archive.write(path,path.relative_to(ROOT))

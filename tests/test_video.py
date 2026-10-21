@@ -1,5 +1,4 @@
 from fractions import Fraction
-import hashlib
 from pathlib import Path
 import tempfile
 import unittest

@@ -18,4 +18,8 @@ does not survive restarts. Download results before restarting.
 
 No worker identity/tracking is used. Review annotated results manually. CPU can
 process slower than playback; other OS/GPU environments need local verification.
-Rebuild TensorRT on the final hardware. ONNX CPU is the portable default.
+Rebuild TensorRT on the final hardware during the deferred HP setup. TensorRT is
+preferred when installed and usable; Auto can fall back to OpenVINO Intel GPU
+then ONNX CPU, with the selection/reasons disclosed. Explicit backends never
+silently fall back. Live frame age
+and host encoding latency exclude sensor/USB buffers and browser delivery.

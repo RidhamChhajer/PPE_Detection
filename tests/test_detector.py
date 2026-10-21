@@ -1,12 +1,21 @@
 import unittest
-import hashlib
-from pathlib import Path
-import tempfile
+from unittest.mock import Mock, patch
+from types import SimpleNamespace
 import numpy as np
-from app.detector import preprocess, postprocess, model_specs, MEAN, STD
+from app.detector import preprocess, postprocess, MEAN, STD, tensorrt_logger
 
 
 class DetectorMathTests(unittest.TestCase):
+    def test_tensorrt_logger_survives_multiple_runtime_instances(self):
+        logger = Mock(WARNING=2)
+        tensorrt_logger.cache_clear()
+        try:
+            with patch.dict('sys.modules', tensorrt=SimpleNamespace(Logger=logger)):
+                self.assertIs(tensorrt_logger(), tensorrt_logger())
+                logger.assert_called_once_with(2)
+        finally:
+            tensorrt_logger.cache_clear()
+
     def test_bgr_normalization_and_bottom_padding(self):
         frame = np.zeros((100, 200, 3), dtype=np.uint8)
         frame[:] = [10, 20, 30]
@@ -32,21 +41,6 @@ class DetectorMathTests(unittest.TestCase):
         self.assertEqual(postprocess(np.zeros((1, 8400, 5)), (1,1), (10,10,3)).shape, (0,6))
         with self.assertRaises(RuntimeError):
             postprocess(np.array([[0,0,1,1,np.nan]]), (1,1), (10,10,3))
-
-    def test_model_provenance_and_tampering(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            engine = root / 'goggles.engine'
-            engine.write_bytes(b'example')
-            with self.assertRaisesRegex(RuntimeError, 'provenance'):
-                model_specs(root)
-            digest = hashlib.sha256(engine.read_bytes()).hexdigest()
-            (root / 'goggles.toml').write_text(f'label="goggles"\nstatus="sample"\nengine_sha256="{digest}"\n')
-            self.assertEqual(model_specs(root)[0].status, 'sample')
-            engine.write_bytes(b'changed')
-            with self.assertRaisesRegex(RuntimeError, 'checksum'):
-                model_specs(root)
-
 
 if __name__ == '__main__':
     unittest.main()

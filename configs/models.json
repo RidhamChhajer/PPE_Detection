@@ -1,12 +1,13 @@
 {
   "schema_version": 1,
   "repository_url": "https://github.com/RidhamChhajer/PPE_Detection",
-  "release_base_url": "https://github.com/RidhamChhajer/PPE_Detection/releases/download/v1.0.0",
+  "release_base_url": "",
   "models": [
     {
-      "id": "goggles-v1",
-      "display_name": "Goggles v1",
-      "version": "v1",
+      "id": "goggles-v2",
+      "camera_role": "face",
+      "display_name": "Goggles RTMDet-L v2",
+      "version": "v2",
       "enabled": true,
       "labels": [
         "goggles"
@@ -31,20 +32,23 @@
       ],
       "contract": "rtmdet-bgr-640-pad114-xyxy-sigmoid-v2",
       "onnx": {
-        "filename": "goggles-v1.onnx",
-        "sha256": "9ded9b32518962346b4a4f2fbb5878de6ced68e03b44062c2265e23721214827"
+        "filename": "goggles-v2.onnx",
+        "sha256": "fddd119d3865ecda103b8ba65e79497d8f49780e93161493941fa3bb3cb456d8"
       },
       "checkpoint": {
-        "filename": "goggles-v1.pth",
-        "source_filename": "best_coco_bbox_mAP_epoch_32.pth",
-        "sha256": "337acd8decbce98623bb82c710bc7e6b19741a9e147407bab3e03d8c1a89d22b"
+        "filename": "goggles-v2.pth",
+        "source_filename": "best_coco_bbox_mAP_epoch_28.pth",
+        "sha256": "f5862021fc0101f82b5fd8bb97ec6ec795ed6574e8e894412615758bed322231"
       },
-      "tensorrt": null
+      "tensorrt": null,
+      "architecture": "rtmdet-l",
+      "qualification": "development; not field-qualified"
     },
     {
-      "id": "footwear-v1",
-      "display_name": "Footwear v1",
-      "version": "v1",
+      "id": "footwear-v2",
+      "camera_role": "feet",
+      "display_name": "Footwear RTMDet-L v2",
+      "version": "v2",
       "enabled": true,
       "labels": [
         "SAFETY_SHOE",
@@ -75,15 +79,17 @@
       ],
       "contract": "rtmdet-bgr-640-pad114-xyxy-sigmoid-v2",
       "onnx": {
-        "filename": "footwear-v1.onnx",
-        "sha256": "dfa96fdce8525ceb90ceb116ebfb8b761c96e91f6e5e58d5e8da30a9eca9ec96"
+        "filename": "footwear-v2.onnx",
+        "sha256": "3af7410bec4e2424ca2a764017a5d81cf74d8a4df5331092b4dc28fd7bc84a8e"
       },
       "checkpoint": {
-        "filename": "footwear-v1.pth",
-        "source_filename": "best_coco_bbox_mAP_epoch_28.pth",
-        "sha256": "9835f6d588292a166877c62ff8567c5b7b7b26f8df232df90c51f623e5ea34d2"
+        "filename": "footwear-v2.pth",
+        "source_filename": "best_coco_bbox_mAP_epoch_14.pth",
+        "sha256": "50d4d203742e72c9a410fbd0000737e1b713b0e5e0c304ee8395b1346e26009b"
       },
-      "tensorrt": null
+      "tensorrt": null,
+      "architecture": "rtmdet-l",
+      "qualification": "development; not field-qualified"
     }
   ]
 }

@@ -30,3 +30,8 @@ release_assets/
 local/
 .coverage
 htmlcov/
+.aws/
+.codex/
+*.pem
+*.key
+premium-audit.json

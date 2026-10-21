@@ -1,28 +1,17 @@
 """TensorRT-only RTMDet inference. No PyTorch dependency in this module."""
-from pathlib import Path
-from dataclasses import dataclass
 import hashlib
 import json
 import threading
+from functools import lru_cache
 
 import cv2
 import numpy as np
-import tomli
+
+from .registry import CONTRACT
 
 INPUT_SIZE = 640
 MEAN = np.array([103.53, 116.28, 123.675], dtype=np.float32)
 STD = np.array([57.375, 57.12, 58.395], dtype=np.float32)
-CONTRACT = 'rtmdet-bgr-640-pad114-xyxy-sigmoid-v2'
-
-
-@dataclass(frozen=True)
-class ModelSpec:
-    path: Path
-    label: str
-    status: str
-    labels: tuple
-    engine_sha256: str
-    contract: str = ''
 
 
 def engine_identity(label, labels):
@@ -32,47 +21,9 @@ def engine_identity(label, labels):
 def check_engine_metadata(spec, shape, name):
     if tuple(shape) != (1, 8400, 4 + len(spec.labels)):
         raise ValueError('Engine output class count disagrees with metadata labels')
-    if spec.contract and name != engine_identity(spec.label, spec.labels):
+    identity = spec.entry['tensorrt'].get('identity', spec.model_id)
+    if name != engine_identity(identity, spec.labels):
         raise ValueError('Engine embedded class identity disagrees with metadata labels/order')
-
-
-def model_specs(directory):
-    """Discover installed engines and verify their status/provenance sidecars."""
-    specifications = []
-    if (Path(directory)/'.installing').exists():
-        raise RuntimeError('Model installation in progress; retry after completion')
-    for path in sorted(Path(directory).glob('*.engine')):
-        metadata_path = path.with_suffix('.toml')
-        if not metadata_path.is_file():
-            raise RuntimeError(f'Missing model provenance for {path.name}; rebuild with export_tensorrt.py')
-        metadata = tomli.loads(metadata_path.read_text(encoding='utf-8'))
-        if metadata.get('label') != path.stem:
-            raise RuntimeError(f'Engine/class metadata mismatch: {path.name}')
-        status = metadata.get('status')
-        if status not in ('sample', 'requires_field_validation'):
-            raise RuntimeError(f'Unrecognized model validation status: {path.name}')
-        if metadata.get('engine_sha256') != hashlib.sha256(path.read_bytes()).hexdigest():
-            raise RuntimeError(f'Engine checksum mismatch: {path.name}')
-        labels = metadata.get('labels', [path.stem])
-        if (not isinstance(labels, list) or not labels or
-                any(not isinstance(label, str) or not label.strip() for label in labels) or
-                len(set(labels)) != len(labels)):
-            raise RuntimeError(f'Invalid class metadata labels: {path.name}')
-        contract = metadata.get('contract', '')
-        if ('labels' in metadata or 'num_classes' in metadata) and (
-                'labels' not in metadata or contract != CONTRACT or
-                type(metadata.get('num_classes')) is not int or metadata['num_classes'] != len(labels)):
-            raise RuntimeError(f'Inconsistent class metadata: {path.name}')
-        if contract and 'labels' not in metadata:
-            raise RuntimeError('Missing ordered class metadata labels')
-        if not contract and path.stem == 'footwear':
-            raise RuntimeError('Footwear requires explicit multiclass metadata')
-        specifications.append(ModelSpec(path.resolve(), path.stem, status, tuple(labels), metadata['engine_sha256'], contract))
-    if not specifications:
-        raise RuntimeError('No verified TensorRT engines installed. Run the export and verification step first.')
-    if (Path(directory)/'.installing').exists():
-        raise RuntimeError('Model installation in progress; retry after completion')
-    return specifications
 
 
 def preprocess(frame):
@@ -125,9 +76,16 @@ def postprocess(raw, scales, shape, threshold=0.30, nms_iou=0.65):
     return result[(result[:, 2] > result[:, 0]) & (result[:, 3] > result[:, 1])]
 
 
+@lru_cache(maxsize=1)
+def tensorrt_logger():
+    # TensorRT keeps one process-wide logger; retain it across Auto probes and jobs.
+    import tensorrt as trt
+    return trt.Logger(trt.Logger.WARNING)
+
+
 class TensorRTEngine:
     """One fixed-shape engine with explicitly owned CUDA resources."""
-    def __init__(self, path, spec=None):
+    def __init__(self, spec):
         import tensorrt as trt
         from cuda.bindings import driver
         self.driver = driver
@@ -137,9 +95,6 @@ class TensorRTEngine:
         self._device = None
         self._stream = None
         self.context = self.engine = self.runtime = None
-        self.label = Path(path).stem
-        if spec is None:
-            spec = next(s for s in model_specs(Path(path).parent) if s.path == Path(path).resolve())
         self.labels = spec.labels
         try:
             self._check(driver.cuInit(0))
@@ -147,10 +102,10 @@ class TensorRTEngine:
             self._cuda_context = self._check(driver.cuDevicePrimaryCtxRetain(self._device))
             self._check(driver.cuCtxSetCurrent(self._cuda_context))
             self._stream = self._check(driver.cuStreamCreate(0))
-            self.logger = trt.Logger(trt.Logger.WARNING)
+            self.logger = tensorrt_logger()
             self.runtime = trt.Runtime(self.logger)
-            engine_bytes = Path(path).read_bytes()
-            if hashlib.sha256(engine_bytes).hexdigest() != spec.engine_sha256:
+            engine_bytes = spec.path.read_bytes()
+            if hashlib.sha256(engine_bytes).hexdigest() != spec.digest:
                 raise RuntimeError('Engine checksum changed since discovery')
             self.engine = self.runtime.deserialize_cuda_engine(engine_bytes)
             if self.engine is None:
@@ -207,10 +162,6 @@ class TensorRTEngine:
             self._check(self.driver.cuStreamSynchronize(self._stream))
             self._check(self.driver.cuMemcpyDtoH(self.host_output.ctypes.data, self.output_ptr, self.host_output.nbytes))
             return self.host_output.copy()
-
-    def detect(self, frame):
-        tensor, scales = preprocess(frame)
-        return postprocess(self.infer_raw(tensor), scales, frame.shape)
 
     def close(self):
         with self._lock:
