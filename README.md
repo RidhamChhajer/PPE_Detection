@@ -81,11 +81,16 @@ extracted project folder, then create the environment:
 ```powershell
 py -3.10 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-auto.txt
+.\.venv\Scripts\python.exe tools/download_models.py
 .\.venv\Scripts\python.exe -m app.app
 ```
 
-This requires both included ONNX files in models/. A source-only copy without
-model files cannot run inference. NVIDIA TensorRT mode additionally needs a compatible
+The download command uses the v2 release URL in configs/models.json to install
+both trained ONNX files into models/ and verify their SHA-256 checksums. Already
+verified files are reused. Private repositories require authenticated access;
+the downloader does not use your browser login or Git credentials. If access is
+denied, download both ONNX assets from the release while signed in and place them
+in models/. NVIDIA TensorRT mode additionally needs a compatible
 TensorRT installation and engines built for that computer. Do not copy the
 development .venv or assume its engines will run on the HP RTX 3050. For an
 extracted deployment bundle, follow its [setup guide](deployment/START_HERE.md).
@@ -167,11 +172,14 @@ metadata lives in models/registry.local.json. Live mode supports either role,
 one shared camera or two cameras; upload runs all enabled models. Shoe pairing remains
 a display heuristic and can join the wrong shoes or leave them separate.
 
-The release model URL is not published yet. For a verified local release bundle:
+The [v2 release](https://github.com/RidhamChhajer/PPE_Detection/releases/tag/v2.0.0)
+URL is configured in configs/models.json. Download the models with:
 
 ```powershell
-python tools/download_models.py --base-url "file:///C:/actual/path/to/release_assets/v2"
+.\.venv\Scripts\python.exe tools/download_models.py
 ```
+
+Use --base-url to override the source, including a file:/// local asset directory.
 
 See [Training](MD%20DOC/TRAINING.md), [Export/deployment](MD%20DOC/EXPORT_AND_DEPLOYMENT.md),
 [Adding a detector](MD%20DOC/ADDING_A_DETECTOR.md), and

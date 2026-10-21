@@ -40,11 +40,15 @@ No HP configuration or engine conversion is performed by the application.
 ```powershell
 py -3.10 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-cpu.txt
-.\.venv\Scripts\python.exe tools/download_models.py --base-url "file:///C:/actual/path/to/release_assets/v2"
+.\.venv\Scripts\python.exe tools/download_models.py
 .\.venv\Scripts\python.exe -m app.app --backend onnx
 ```
 
-The release URL is unset until publication; supply a real verified asset source.
+configs/models.json points to the published v2.0.0 model assets. The command
+downloads both models and checks their hashes; --base-url can override the source.
+Private GitHub assets require authenticated access, which the downloader does
+not currently implement. If access is denied, download the two ONNX assets while
+signed in and copy them into models/.
 CPU mode selects configs/models.json automatically. It uses CPU cores, not Intel
 graphics. The former ONNX CUDA provider option has been removed. Auto dependencies
 include ONNX Runtime for fallback and for OpenVINO's ONNX identity/contract check.

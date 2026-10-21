@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import numpy as np
 from app.registry import model_specs, read_registry, sha256
 from app.runtime import Detector, select_runtime, openvino_device
-from tools.download_models import download
+from tools.download_models import download, main as download_main
 from support import registry_fixture
 
 
@@ -21,6 +21,22 @@ class PortableTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+
+    def test_download_command_uses_configured_v2_release_and_allows_override(self):
+        document = read_registry()
+        base = 'https://github.com/RidhamChhajer/PPE_Detection/releases/download/v2.0.0'
+        self.assertEqual(document['release_base_url'], base)
+        for options, expected in [([], base), (['--base-url', 'file:///test-models'], 'file:///test-models')]:
+            with patch.object(sys, 'argv', ['download_models.py', *options]), \
+                    patch('tools.download_models.download') as fetch, patch('builtins.print'):
+                download_main()
+            enabled = [entry for entry in document['models'] if entry['enabled']]
+            self.assertEqual(fetch.call_count, len(enabled))
+            for call, entry in zip(fetch.call_args_list, enabled):
+                artifact = entry['onnx']
+                self.assertEqual(call.args[0], expected+'/'+artifact['filename'])
+                self.assertEqual(call.args[1].name, artifact['filename'])
+                self.assertEqual(call.args[2], artifact['sha256'])
 
     def test_real_onnx_single_and_multiclass_structured_outputs(self):
         for labels in (['goggles'],['SAFETY_SHOE','NOT_SAFETY_SHOE']):
