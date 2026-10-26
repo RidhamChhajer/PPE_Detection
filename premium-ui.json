@@ -1,0 +1,36 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": [
+    "frontend/src"
+  ],
+  "locale": "en-IN",
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": [
+    "Select/Listbox",
+    "Form",
+    "Scrollbar",
+    "Toast",
+    "CRUD"
+  ],
+  "ownership": {
+    "Select/Listbox": "native"
+  },
+  "requiredCommands": [
+    "unit",
+    "browser",
+    "frontend",
+    "format",
+    "static"
+  ],
+  "commands": {
+    "unit": ".venv\\Scripts\\python.exe -m pytest",
+    "browser": ".venv\\Scripts\\python.exe tests/browser_check.py",
+    "format": ".venv\\Scripts\\python.exe -m ruff format --check app tools tests",
+    "static": ".venv\\Scripts\\python.exe -m ruff check app tools tests",
+    "frontend": "npm --prefix frontend run build"
+  },
+  "evidence": {
+    "crudFullFlow": "tests/browser_check.py",
+    "failurePaths": "tests/test_api.py"
+  }
+}

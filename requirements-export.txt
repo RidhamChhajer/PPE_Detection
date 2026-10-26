@@ -1,3 +1,0 @@
--r requirements-training.txt
--r requirements-cpu.txt
-onnx==1.16.2

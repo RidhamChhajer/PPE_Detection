@@ -1,134 +1,228 @@
-"""Verified TensorRT, OpenVINO and ONNX CPU inference with automatic selection."""
-from dataclasses import dataclass
-import json
-from pathlib import Path
+import threading
+import time
+from collections import deque
+
+import cv2
 import numpy as np
 
-from .detector import preprocess, postprocess, CONTRACT
-from .registry import sha256, model_specs, DEFAULT_REGISTRY
+from app.cameras import CameraPool, frame_rate
+from app.config import VIEWS
+from app.inference import annotate, jpeg, summarize
 
 
-@dataclass(frozen=True)
-class Detection:
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    confidence: float
-    class_id: int
-    class_label: str
+def placeholder(text):
+    frame = np.full((450, 800, 3), (63, 40, 20), np.uint8)
+    cv2.putText(
+        frame, text, (45, 225), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (220, 230, 240), 1, cv2.LINE_AA
+    )
+    return jpeg(frame)
 
 
-def structured(rows, labels):
-    return [Detection(*map(float,row[:5]),int(row[5]),labels[int(row[5])]) for row in rows]
+class Runtime:
+    def __init__(self, store, detector, pool=None):
+        self.store, self.detector = store, detector
+        self.pool = pool or CameraPool()
+        self.lock = threading.RLock()
+        self.lifecycle = threading.Lock()
+        self.running = False
+        self.states = {}
+        self.previews = {}
+        self.config = store.snapshot()
+        self.stop_event = threading.Event()
+        self.thread = None
+        self.preview_thread = None
+        self.generation = 0
+        self.empty = placeholder("Camera preview will appear here")
 
+    def start(self):
+        with self.lifecycle:
+            if self.running:
+                return
+            if any(worker and worker.is_alive() for worker in (self.thread, self.preview_thread)):
+                raise RuntimeError("Previous camera session is still stopping. Retry shortly.")
+            self.config = self.store.snapshot()
+            if self.config.upper.camera is None and self.config.lower.camera is None:
+                raise ValueError("Select at least one camera in Settings.")
+            self.pool.start(self.config)
+            self.states = {}
+            self.previews = {}
+            self.stop_event = threading.Event()
+            self.generation += 1
+            self.running = True
+            self.preview_thread = threading.Thread(
+                target=self._preview, args=(self.stop_event,), daemon=True, name="live-preview"
+            )
+            self.preview_thread.start()
+            self.thread = threading.Thread(
+                target=self._infer, args=(self.stop_event,), daemon=True, name="live-inference"
+            )
+            self.thread.start()
 
-def openvino_device(core, requested):
-    if requested == 'CPU':
-        return 'CPU', core.get_property('CPU', 'FULL_DEVICE_NAME')
-    for name in core.available_devices:
-        if name.split('.')[0] == 'GPU':
-            label = core.get_property(name, 'FULL_DEVICE_NAME')
-            if 'intel' in label.casefold():
-                return name, label
-    raise RuntimeError('OpenVINO Intel GPU is unavailable. Check the Intel graphics driver or use --backend onnx.')
+    def stop(self):
+        with self.lifecycle:
+            self.stop_event.set()
+            with self.lock:
+                self.running = False
+                self.states = {}
+                self.previews = {}
+            if self.preview_thread:
+                self.preview_thread.join(timeout=3)
+            if self.thread:
+                self.thread.join(timeout=15)
+                if self.thread.is_alive():
+                    raise RuntimeError("GPU operation is still finishing. Retry Stop shortly.")
+            released = self.pool.stop()
+            with self.lock:
+                self.running = False
+                self.states = {}
+                self.previews = {}
+            if not released:
+                raise RuntimeError("A USB driver is still releasing a device. Retry Stop shortly.")
 
-
-class Detector:
-    def __init__(self, spec):
-        self.spec = spec
-        self.session = self.trt = self.compiled = self.request = None
-        self.device_name = 'CPU' if spec.backend == 'onnx' else 'NVIDIA GPU'
-        if sha256(spec.path) != spec.digest:
-            raise ValueError('Model checksum changed since discovery')
-        if spec.backend in ('onnx', 'openvino'):
-            try:
-                import onnxruntime as ort
-            except ImportError as error:
-                raise RuntimeError('CPU inference requires: python -m pip install -r requirements-cpu.txt') from error
-            options = ort.SessionOptions()
-            options.intra_op_num_threads = 4
-            options.inter_op_num_threads = 1
-            self.session = ort.InferenceSession(str(spec.path), sess_options=options, providers=['CPUExecutionProvider'])
-            inputs, outputs = self.session.get_inputs(), self.session.get_outputs()
-            if len(inputs) != 1 or len(outputs) != 1:
-                raise ValueError('Expected one input and one output')
-            if (inputs[0].name, inputs[0].type, inputs[0].shape) != ('images','tensor(float)',[1,3,640,640]):
-                raise ValueError('Incompatible ONNX input contract')
-            if (outputs[0].name, outputs[0].type, outputs[0].shape) != ('detections','tensor(float)',[1,8400,4+len(spec.labels)]):
-                raise ValueError('Incompatible ONNX output/class contract')
-            metadata = self.session.get_modelmeta().custom_metadata_map
-            if metadata.get('contract') != CONTRACT or metadata.get('model_id') != spec.model_id or json.loads(metadata.get('labels','[]')) != list(spec.labels):
-                raise ValueError('ONNX embedded class/version metadata disagrees with registry')
-            if spec.backend == 'openvino':
-                # Validate the hash-verified ONNX contract before handing it to another runtime.
-                self.session = None
+    def _preview(self, stop_event):
+        seen = {}
+        samples = {view: deque() for view in VIEWS}
+        while not stop_event.is_set():
+            raw = {}
+            for view in VIEWS:
+                camera = self.pool.devices.get(getattr(self.config, view).camera)
+                if camera is None:
+                    continue
+                frame, stamp, sequence, info = camera.snapshot()
+                if frame is None or not info["connected"] or seen.get(view) == sequence:
+                    continue
+                seen[view] = sequence
+                with self.lock:
+                    result = self.states.get(view, {})
+                    fresh = time.monotonic() - result.get("timestamp", 0) < 1
+                    detections = (
+                        result.get("detections", []) if fresh and not result.get("error") else []
+                    )
                 try:
-                    import openvino as ov
-                except ImportError as error:
-                    raise RuntimeError('OpenVINO requires: python -m pip install -r requirements-auto.txt') from error
-                core = ov.Core()
-                target, label = openvino_device(core, spec.device)
-                self.device_name = f'{target} · {label}'
-                self.compiled = core.compile_model(str(spec.path), target, {
-                    'PERFORMANCE_HINT': 'LATENCY', 'INFERENCE_PRECISION_HINT': ov.Type.f32,
-                })
-                self.request = self.compiled.create_infer_request()
-        else:
-            from .detector import TensorRTEngine
-            self.trt = TensorRTEngine(spec)
+                    if detections:
+                        image = jpeg(annotate(frame, detections))
+                    else:
+                        key = (id(camera), sequence)
+                        if key not in raw:
+                            raw[key] = jpeg(frame)
+                        image = raw[key]
+                except Exception:
+                    continue
+                preview = {
+                    "jpeg": image,
+                    "timestamp": stamp,
+                    "sequence": sequence,
+                    "fps": frame_rate(samples[view], time.monotonic()),
+                }
+                with self.lock:
+                    if stop_event.is_set():
+                        return
+                    self.previews[view] = preview
+            stop_event.wait(0.005)
 
-    def infer_raw(self, tensor):
-        if tensor.shape != (1,3,640,640) or tensor.dtype != np.float32 or not np.isfinite(tensor).all():
-            raise ValueError('Expected finite float32 NCHW input')
-        if self.session:
-            raw = self.session.run(['detections'], {'images':tensor})[0]
-        elif self.request is not None:
-            self.request.infer({0: tensor})
-            raw = self.request.get_output_tensor(0).data.copy()
-        else:
-            raw = self.trt.infer_raw(tensor)
-        if raw.shape != (1,8400,4+len(self.spec.labels)) or raw.dtype != np.float32 or not np.isfinite(raw).all():
-            raise RuntimeError('Invalid/non-finite detector output')
-        return raw
+    def _infer(self, stop_event):
+        seen = {}
+        samples = {view: deque() for view in VIEWS}
+        while not stop_event.is_set():
+            for view in VIEWS:
+                if stop_event.is_set():
+                    break
+                cfg = getattr(self.config, view)
+                camera = self.pool.devices.get(cfg.camera)
+                if not camera:
+                    continue
+                frame, stamp, sequence, info = camera.snapshot()
+                if frame is None or seen.get(view) == sequence:
+                    continue
+                seen[view] = sequence
+                detections, ms, error = [], None, self.detector.errors.get(view, "")
+                try:
+                    if view in self.detector.models:
+                        detections, ms = self.detector.predict(view, frame, cfg)
+                        error = ""
+                    state = {
+                        "timestamp": stamp,
+                        "detections": detections,
+                        "inference_ms": ms,
+                        "error": error,
+                        "latency_ms": round((time.monotonic() - stamp) * 1000, 1),
+                    }
+                except Exception as exc:
+                    state = {
+                        "timestamp": stamp,
+                        "detections": [],
+                        "inference_ms": None,
+                        "error": f"Inference failed: {exc}",
+                        "latency_ms": None,
+                    }
+                state["processing_fps"] = frame_rate(samples[view], time.monotonic())
+                with self.lock:
+                    if not stop_event.is_set():
+                        self.states[view] = state
+            stop_event.wait(0.005)
 
-    def detect(self, frame):
-        tensor, scales = preprocess(frame)
-        rows = postprocess(self.infer_raw(tensor), scales, frame.shape,
-                           self.spec.entry['confidence_threshold'], self.spec.entry['nms_iou_threshold'])
-        return structured(rows, self.spec.labels)
+    def snapshot(self):
+        views = {}
+        with self.lock:
+            running = self.running
+            for view in VIEWS:
+                cfg = getattr(self.config if running else self.store.snapshot(), view)
+                camera = self.pool.devices.get(cfg.camera)
+                info = (
+                    camera.snapshot()[3]
+                    if camera
+                    else {
+                        "camera": cfg.camera,
+                        "connected": False,
+                        "message": "Stopped" if not running else "Disabled",
+                        "actual": {},
+                        "controls": {},
+                        "defaults": {},
+                    }
+                )
+                state = self.states.get(view, {})
+                preview = self.previews.get(view, {})
+                preview_age = (time.monotonic() - preview["timestamp"]) * 1000 if preview else None
+                age = (time.monotonic() - state["timestamp"]) * 1000 if state else None
+                fresh = running and info["connected"] and age is not None and age < 1000
+                detections = state.get("detections", []) if fresh and not state.get("error") else []
+                views[view] = {
+                    **info,
+                    "detections": detections,
+                    "summary": summarize(detections),
+                    "age_ms": round(age) if age is not None else None,
+                    "preview_age_ms": round(preview_age)
+                    if running and info["connected"] and preview_age is not None
+                    else None,
+                    "preview_fps": preview.get("fps")
+                    if running
+                    and info["connected"]
+                    and preview_age is not None
+                    and preview_age < 1000
+                    else None,
+                    "inference_ms": state.get("inference_ms") if fresh else None,
+                    "processing_fps": state.get("processing_fps") if fresh else None,
+                    "latency_ms": state.get("latency_ms") if fresh else None,
+                    "model_ready": view in self.detector.models,
+                    "error": state.get("error", self.detector.errors.get(view, "")),
+                    "stale": running and info["connected"] and not fresh,
+                }
+        return {
+            "running": running,
+            "gpu": dict(self.detector.gpu),
+            "views": views,
+            "config_warning": self.store.warning,
+        }
 
-    def close(self):
-        self.session = None
-        self.request = self.compiled = None
-        if self.trt:
-            self.trt.close()
-            self.trt = None
-
-    def __enter__(self): return self
-    def __exit__(self, *args): self.close()
-
-
-def select_runtime(directory, registry=None, backend='auto', device='GPU', factory=Detector):
-    """Auto tests both models on each candidate; explicit choices never silently fall back."""
-    if backend not in ('auto', 'onnx', 'tensorrt', 'openvino'):
-        raise ValueError('Unknown inference backend')
-    failures = []
-    candidates = ('tensorrt', 'openvino', 'onnx') if backend == 'auto' else (backend,)
-    for candidate in candidates:
-        manifest = registry or (Path(directory)/'registry.local.json' if candidate == 'tensorrt' else DEFAULT_REGISTRY)
-        try:
-            specs = model_specs(directory, manifest, candidate, device=device)
-            selected_device = device if candidate == 'openvino' else 'NVIDIA GPU' if candidate == 'tensorrt' else 'CPU'
-            if backend == 'auto':
-                for spec in specs:
-                    with factory(spec) as detector:
-                        detector.infer_raw(np.zeros((1, 3, 640, 640), dtype=np.float32))
-                        selected_device = detector.device_name
-            return specs, manifest, dict(backend=candidate, device=selected_device, automatic=backend == 'auto',
-                                        fallback_reasons=failures)
-        except Exception as error:
-            if backend != 'auto':
-                raise
-            failures.append(f'{candidate}: {error}')
-    raise RuntimeError('No usable inference backend. ' + '; '.join(failures))
+    def frame(self, view):
+        with self.lock:
+            cfg = getattr(self.config, view)
+            camera = self.pool.devices.get(cfg.camera)
+            if not self.running or not camera:
+                return self.empty
+            if not camera.snapshot()[3]["connected"]:
+                return self.empty
+            preview = self.previews.get(view)
+            if preview and time.monotonic() - preview["timestamp"] < 1:
+                return preview["jpeg"]
+            return self.empty

@@ -1,52 +1,68 @@
-"""Install hash-verified ONNX assets from a configured release or local URL."""
-import argparse
+"""Download and verify the trained YOLO models for this version of the application."""
+
+import hashlib
+import json
 import os
 from pathlib import Path
-import shutil
+import re
 import sys
 import tempfile
+import urllib.error
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT))
-from app.registry import read_registry, sha256, DEFAULT_REGISTRY, filename
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def download(url, target, expected_hash):
     target = Path(target)
-    target.parent.mkdir(parents=True,exist_ok=True)
-    if target.is_file() and sha256(target) == expected_hash:
-        return
-    if urlparse(url).scheme not in ('https','http','file'):
-        raise ValueError('Download URL must use https, http (local testing), or file')
-    descriptor, temporary = tempfile.mkstemp(prefix=target.name+'.',suffix='.partial',dir=target.parent)
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+        raise ValueError("Model manifest contains an invalid SHA-256 checksum.")
+    if urlparse(url).scheme not in {"https", "file"}:
+        raise ValueError("Model downloads require HTTPS.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        if sha256(target) == expected_hash:
+            return
+        raise ValueError(f"{target} differs from this release. Move it aside before downloading.")
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=target.name + ".", suffix=".partial", dir=target.parent
+    )
     try:
-        with os.fdopen(descriptor,'wb') as output, urlopen(url,timeout=60) as source:
-            shutil.copyfileobj(source,output)
+        with os.fdopen(descriptor, "wb") as output, urlopen(url, timeout=60) as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                output.write(chunk)
         if sha256(temporary) != expected_hash:
-            raise ValueError(f'SHA256 mismatch for {target.name}; existing model preserved')
-        os.replace(temporary,target)
+            raise ValueError(f"SHA-256 verification failed for {target.name}.")
+        if target.exists():
+            raise ValueError(f"{target} appeared during the download. Existing model preserved.")
+        os.replace(temporary, target)
     finally:
         Path(temporary).unlink(missing_ok=True)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--registry',type=Path,default=DEFAULT_REGISTRY)
-    parser.add_argument('--models',type=Path,default=ROOT/'models')
-    parser.add_argument('--base-url',help='Release URL or file:/// local asset directory')
-    args = parser.parse_args()
-    document = read_registry(args.registry)
-    base = args.base_url or document.get('release_base_url')
-    if not base:
-        parser.error('Release URL is not configured. Set release_base_url in configs/models.json or pass --base-url.')
-    for entry in document['models']:
-        if entry['enabled']:
-            artifact = entry['onnx']
-            name = filename(artifact['filename'])
-            download(base.rstrip('/')+'/'+name,args.models/name,artifact['sha256'])
-            print(f'Verified {entry["id"]}: {args.models/name}')
+    manifest = json.loads((ROOT / "models" / "manifest.json").read_text(encoding="utf-8"))
+    for model in manifest["models"]:
+        name = model["filename"]
+        if name not in {"upper.pt", "lower.pt"}:
+            raise ValueError(f"Unexpected model filename: {name}")
+        target = ROOT / "models" / name
+        download(manifest["release_base_url"] + "/" + name, target, model["sha256"])
+        print(f"Verified {target.name}")
 
 
-if __name__ == '__main__': main()
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, KeyError, urllib.error.URLError) as exc:
+        print(f"Model download failed: {exc}", file=sys.stderr)
+        sys.exit(1)

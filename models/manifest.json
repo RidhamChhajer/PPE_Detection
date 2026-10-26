@@ -1,0 +1,16 @@
+{
+  "release_base_url": "https://github.com/RidhamChhajer/PPE_Detection/releases/download/yolo-model-v1",
+  "architecture": "YOLO26m",
+  "models": [
+    {
+      "filename": "upper.pt",
+      "sha256": "76950eb01593b67a37aa7c37cb3e8efd6377f25308759dd1c60c66f49da663a6",
+      "classes": ["goggles", "no_goggles", "empty_wrist", "not_empty_wrist"]
+    },
+    {
+      "filename": "lower.pt",
+      "sha256": "8c1bf0f3ab52d0f42781576e1754668fa046e4302916f148b945528d2dcc38a7",
+      "classes": ["SAFETY_SHOE", "NOT_SAFETY_SHOE"]
+    }
+  ]
+}

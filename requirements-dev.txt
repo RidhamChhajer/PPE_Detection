@@ -1,5 +1,4 @@
--r requirements-auto.txt
-tomli==2.4.1
-# ONNX is used to generate tiny models in offline CPU regression tests.
-onnx==1.16.2
-scipy==1.15.3
+httpx==0.28.1
+pytest==8.3.5
+ruff==0.11.8
+playwright==1.51.0

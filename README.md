@@ -1,115 +1,152 @@
-# PPE Detection
+# AI Based PPE Monitoring & Warning
 
-Detect safety goggles and footwear in recorded videos or live camera feeds using
-two trained RTMDet-L models. Detections display bounding boxes, class labels and
-confidence scores.
+A local Windows application for camera-based personal protective equipment inspection, built with a React interface and a Python inference service. Two trained YOLO26m models inspect goggles and wrist accessories in the upper view, and footwear in the lower view.
 
-## Features
+Processing runs on the local PC. An NVIDIA GPU is required for inference; there is no automatic CPU fallback.
 
-- Upload a video, review the annotated result, and download it.
-- Use a face camera, a footwear camera, one shared camera, or two separate cameras.
-- Automatic inference backend selection with the active backend shown in the UI.
-- Local processing; uploaded videos preserve their resolution and timing. Output
-  videos do not include audio.
+## Capabilities
+
+- Live monitoring with separate cameras, one shared camera, or one enabled view.
+- Detection of goggles, no goggles, bare wrists, wrist accessories, safety shoes, and other shoes.
+- Camera selection, supported driver picture controls, detection thresholds, and optional wrist SAHI slicing.
+- Stable, stacked camera panels with full-frame previews and per-camera fullscreen.
+- Image and video testing, with annotated, silent H.264 video playback and download.
+- Bundled frontend assets, fonts, and logos for offline operation after setup.
+
+Earplug detection, worker counting, violation statistics, audible warnings, and inspection history are not implemented. Their interface placeholders do not represent working detectors or recorded production data. The Sample dashboard uses illustrative data.
 
 ## Requirements
 
-- Windows x64 and Python 3.10 x64.
-- Git, or a downloaded copy of the repository.
-- Internet access for dependency and model downloads.
-- A connected camera for live detection; no camera is needed for video uploads.
+- Windows x64 and 64-bit Python 3.10, the version used for local testing. The setup script accepts Python 3.10–3.13.
+- An NVIDIA GPU and a driver compatible with PyTorch's CUDA 12.8 runtime.
+- Internet access and several GB of available disk space for initial installation.
+- A browser and suitable cameras for live monitoring. Cameras are not needed for media tests.
 
-GPU acceleration requires a supported GPU and compatible drivers. CPU inference
-is available when GPU acceleration is unavailable.
+Node.js is needed only when developing or rebuilding the frontend. Local development used an RTX 2050 with 4 GB VRAM; performance on other hardware must be measured.
 
 ## Installation
 
-Clone the repository and open PowerShell in the project folder:
+Clone the repository and run these commands in PowerShell:
 
 ```powershell
 git clone https://github.com/RidhamChhajer/PPE_Detection.git
 cd PPE_Detection
-py -3.10 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-auto.txt
+py -3.10 tools/setup_gpu.py
 .\.venv\Scripts\python.exe tools/download_models.py
 ```
 
-The download command installs `goggles-v2.onnx` and `footwear-v2.onnx` into
-`models/`, verifies their SHA-256 checksums, and reuses existing verified files.
-The release URL is configured in `configs/models.json`.
+The setup script creates `.venv`, installs PyTorch 2.9.1 and torchvision 0.24.1 from the CUDA 12.8 wheel index, installs `requirements.txt`, and verifies a real GPU calculation. It also creates a Windows shortcut. It does not install NVIDIA drivers.
 
-**Private repository access:** collaborators must accept their invitation. The
-downloader does not authenticate with GitHub. If it returns 404, sign into GitHub,
-download both ONNX files from the [v2 release](https://github.com/RidhamChhajer/PPE_Detection/releases/tag/v2.0.0),
-and place them in `models/`. Training checkpoints (`.pth`) are not needed for inference.
+The model download command installs `upper.pt` and `lower.pt` into `models/` from the [YOLO Model release](https://github.com/RidhamChhajer/PPE_Detection/releases/tag/yolo-model-v1). It verifies the SHA-256 checksums in [`models/manifest.json`](models/manifest.json), skips files that already match, and refuses to overwrite a different local model. Both weights are release assets rather than files stored in Git history. The downloader uses only the Python standard library.
+
+For a factory PC specifically equipped with an RTX 3050 6 GB, `Setup RTX 3050 6GB.cmd` additionally checks the GPU name and available VRAM. For another supported NVIDIA GPU, use `Setup GPU.cmd` or the Python setup command above.
+
+### Manual dependency installation
+
+If you prefer to install dependencies yourself:
+
+```powershell
+py -3.10 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -c "from tools.setup_gpu import verify_gpu; verify_gpu()"
+.\.venv\Scripts\python.exe tools/download_models.py
+```
+
+Installing `requirements.txt` alone is not the complete CUDA setup. Install the pinned CUDA-enabled PyTorch packages first.
 
 ## Run
 
-```powershell
-.\.venv\Scripts\python.exe -m app.app
-```
-
-Open **http://127.0.0.1:8765**. Keep the terminal open while using the application;
-press **Ctrl+C** to stop it.
-
-### Inference backends
-
-Auto mode tries usable TensorRT engines on NVIDIA GPUs, then OpenVINO on Intel
-GPUs, then ONNX Runtime on CPU. The interface shows the selection and fallback
-reasons. Auto does not install drivers or build TensorRT engines.
-
-To select a backend explicitly:
+Double-click `Start PPE Detection System.cmd`, or run:
 
 ```powershell
-# Intel GPU
-.\.venv\Scripts\python.exe -m app.app --backend openvino
-# CPU
-.\.venv\Scripts\python.exe -m app.app --backend onnx
-# NVIDIA GPU: requires TensorRT dependencies and engines built for this computer
-.\.venv\Scripts\python.exe -m app.app --backend tensorrt
+.\.venv\Scripts\python.exe tools/launch.py
 ```
 
-Explicit choices do not silently fall back. See
-[Installation](MD%20DOC/INSTALLATION.md) and
-[Export and deployment](MD%20DOC/EXPORT_AND_DEPLOYMENT.md) for GPU setup.
+Open **http://127.0.0.1:8876** if the browser does not open automatically. In **Settings**, select the upper and lower cameras, save, and select **Start detection**. Enable desktop camera access in Windows and close other applications using the devices.
+
+Use **Stop detection** to release the cameras. Closing the browser leaves the service running. Double-click `Stop PPE Detection System.cmd` to stop the service completely.
+
+For a foreground service that stops with Ctrl+C:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.server:app --host 127.0.0.1 --port 8876 --no-access-log
+```
 
 ## Usage
 
-### Recorded video
+### Live monitoring
 
-Select **Upload video**, choose a file, and click **Process video**. Both detectors
-run on the video. The completed result can be played and downloaded in the browser.
-Uploads are limited to 512 MB; uploaded inputs are removed after processing and
-results expire after 24 hours.
+The upper view inspects goggles and wrists; the lower view inspects footwear. Camera capture, preview publishing, and inference run independently. Stale, disconnected, and stopped observations clear the displayed detection evidence.
 
-### Live cameras
+Camera panels keep their proportions when capture resolution changes. The full frame fits inside each panel without cropping; borders may appear. Browser zoom and small screens use normal scrolling. GPU information and per-model inference timings are available in **Settings > Inference & hardware**.
 
-Select **Live camera**, refresh the device list, and assign the camera roles:
+Stop detection before saving settings. Driver picture controls appear only when supported. Resolution and frame rate are requests; check the actual values after connection. Confidence thresholds and SAHI settings require calibration on representative footage.
 
-| Mode | Face camera | Feet camera |
+### Image and video tests
+
+**Test media** accepts JPEG, PNG, and supported video files up to **250 MB**, using the upper, lower, or both detectors. Video tests process every frame and produce an annotated MP4 without audio. Exports are limited to **1 GB**.
+
+Uploads and exports are temporary. Download results before removing a test, starting another test, or stopping the service. Media tests do not populate worker or violation counters.
+
+## Models and limitations
+
+| Checkpoint | Architecture | Classes |
 | --- | --- | --- |
-| Goggles only | Camera A | Not used |
-| Footwear only | Not used | Camera A |
-| Combined preview | Camera A | Camera A |
-| Separate previews | Camera A | Camera B |
+| `upper.pt` | YOLO26m | `goggles`, `no_goggles`, `empty_wrist`, `not_empty_wrist` |
+| `lower.pt` | YOLO26m | `SAFETY_SHOE`, `NOT_SAFETY_SHOE` |
 
-Click **Start cameras** to begin and **Stop cameras** before changing assignments
-or switching to video processing. A shared camera opens once and runs both models;
-separate cameras run only their assigned detector. Live detection skips older
-frames to avoid a processing backlog.
+The application checks model class names when loading. Generic COCO checkpoints and the older RTMDet ONNX/PTH models cannot replace these weights. To install different trusted weights, stop the service, replace the files, and restart it.
 
-## Limitations
+Supplied training reports contain these **validation-set** results, recorded in [`models/metadata.json`](models/metadata.json):
 
-Detection quality depends on training data, lighting, visibility and camera
-placement. The application can miss PPE or produce false positives; it does not
-certify compliance. Earplug detection, worker tracking and missing-PPE alerts are
-not implemented. Performance must be validated on the deployment hardware.
+| Model | Precision | Recall | mAP@50 | mAP@50–95 |
+| --- | ---: | ---: | ---: | ---: |
+| Upper | 0.745 | 0.709 | 0.734 | 0.358 |
+| Lower | 0.932 | 0.863 | 0.934 | 0.705 |
 
-## Documentation
+These are not factory acceptance results or a certification of safety. No independent held-out test report was supplied with these checkpoints. Validate missed detections, false positives, and processing speed with the final cameras, lighting, movement, equipment, and both views operating together.
 
-- [Model results](MD%20DOC/MODELS.md)
-- [Camera integration](MD%20DOC/CAMERA_INTEGRATION.md)
-- [Training](MD%20DOC/TRAINING.md)
-- [Development and tests](MD%20DOC/DEVELOPMENT.md)
-- [Verification](MD%20DOC/VERIFICATION.md)
-- [Deployment bundle setup](deployment/START_HERE.md)
+**No prediction means “Not visible”; it does not establish compliance.** Results describe visible scene evidence. The application does not identify employees, associate every PPE item with an individual, or establish that detected equipment is factory-approved or correctly worn. It does not control an access gate or provide a safety interlock.
+
+## Troubleshooting
+
+| Issue | Action |
+| --- | --- |
+| CUDA setup fails | Check the NVIDIA driver, internet connection, Python version, and available disk space; rerun setup after resolving the error. |
+| Models are missing | Run `tools/download_models.py` with the project Python environment. |
+| Model checksum differs | Preserve or move the existing weights before downloading the release version; the downloader will not overwrite them. |
+| Camera is unavailable | Check its assignment, Windows camera permissions, and competing camera applications. Stop detection before refreshing controls. |
+| Detection is intermittent | Check the model status, lighting, focus, target size, and confidence settings. Empty results do not establish compliance. |
+| Processing is slow | Review inference timings in Settings. Reduce SAHI workload or input size, then revalidate detection quality. |
+| Application does not start | Inspect `TEMPORARY/server.log` and check whether port 8876 is already in use. |
+
+## Development
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check app tools tests
+npm --prefix frontend ci
+npm --prefix frontend run lint
+npm --prefix frontend run build
+.\.venv\Scripts\python.exe tests/browser_check.py
+```
+
+The browser check requires Microsoft Edge and uses an isolated service with simulated cameras and detector outputs. It exercises the real frontend, API, video encoding, and downloads; it does not measure field detection accuracy. Build output is written to `app/static/` and included in the repository, so normal installation does not require Node.js.
+
+| Directory | Contents |
+| --- | --- |
+| `app/` | API, camera capture, inference, media processing, and compiled frontend |
+| `frontend/` | React source, build configuration, and original assets |
+| `models/` | Model manifest and locally downloaded weights |
+| `config/` | Local camera settings; device assignments are excluded from Git |
+| `tools/` | Setup, model downloads, launch/stop, and optional training utilities |
+| `tests/` | Automated regression and browser checks |
+
+`tools/dataset.py` prepares separate upper/lower YOLO datasets from reviewed COCO annotations. `tools/train.py` and the Kaggle notebooks support optional training and evaluation. Training data, recordings, local environments, and temporary outputs are not included in the repository. `DESIGN.md` and `UX-CONTRACT.md` document the maintained interface conventions.
+
+## Previous releases
+
+The earlier RTMDet implementation remains available in the repository history and the existing [v2.0.0 release](https://github.com/RidhamChhajer/PPE_Detection/releases/tag/v2.0.0). Use its matching source and models together. This YOLO version uses a separate model release and does not modify the older release assets.

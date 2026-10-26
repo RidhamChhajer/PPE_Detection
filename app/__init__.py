@@ -1,1 +1,1 @@
-"""Local PPE video application."""
+"""Offline PPE passage monitor."""

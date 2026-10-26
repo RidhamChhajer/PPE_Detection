@@ -1,5 +1,0 @@
--r ../requirements-auto.txt
-# SciPy verifies the new engines during setup only.
-scipy==1.15.3
-tensorrt-cu12==10.13.3.9
-cuda-python==12.9.2

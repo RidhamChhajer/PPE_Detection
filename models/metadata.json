@@ -1,0 +1,37 @@
+{
+  "upper": {
+    "sha256": "76950eb01593b67a37aa7c37cb3e8efd6377f25308759dd1c60c66f49da663a6",
+    "training_epochs_completed": 67,
+    "best_validation_epoch": 42,
+    "validation_metrics": {
+      "metrics/precision(B)": 0.745,
+      "metrics/recall(B)": 0.70936,
+      "metrics/mAP50(B)": 0.73352,
+      "metrics/mAP50-95(B)": 0.35815
+    },
+    "model_scale": "m",
+    "classes": [
+      "goggles",
+      "no_goggles",
+      "empty_wrist",
+      "not_empty_wrist"
+    ]
+  },
+  "lower": {
+    "sha256": "8c1bf0f3ab52d0f42781576e1754668fa046e4302916f148b945528d2dcc38a7",
+    "training_epochs_completed": 100,
+    "best_validation_epoch": 86,
+    "validation_metrics": {
+      "metrics/precision(B)": 0.9321,
+      "metrics/recall(B)": 0.86257,
+      "metrics/mAP50(B)": 0.93439,
+      "metrics/mAP50-95(B)": 0.70486
+    },
+    "model_scale": "m",
+    "classes": [
+      "SAFETY_SHOE",
+      "NOT_SAFETY_SHOE"
+    ]
+  },
+  "limitations": "Metrics are from supplied validation reports. No independent held-out test report or factory acceptance result is included."
+}
