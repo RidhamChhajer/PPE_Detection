@@ -15,6 +15,7 @@ from reportlab.platypus import (
     TableStyle,
     Image,
     KeepTogether,
+    PageBreak,
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
@@ -187,6 +188,14 @@ def generate_daily_pdf(date_str: str, summary: dict) -> bytes:
 
     report_time = datetime.now().strftime("%H:%M")
 
+    # Use rolling window info if available in summary
+    window_start = summary.get("window_start", "")
+    window_end = summary.get("window_end", "")
+    if window_start and window_end:
+        period_line = f"<b>Period</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {window_start} &#8594; {window_end}<br/>"
+    else:
+        period_line = f"<b>Report Time</b> : {report_time}<br/>"
+
     elements = []
 
     # 1. TOP NAVY HEADER BANNER
@@ -200,7 +209,7 @@ def generate_daily_pdf(date_str: str, summary: dict) -> bytes:
             Paragraph(
                 f"""<font size="8" color="#CBD5E1">
                 <b>Date</b> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {formatted_date}<br/>
-                <b>Report Time</b> : {report_time}<br/>
+                {period_line}
                 <b>Location</b> &nbsp;&nbsp;: Production Hall<br/>
                 <b>Camera</b> &nbsp;&nbsp;&nbsp;&nbsp;: Gate-01 (Main)<br/>
                 <b>System</b> &nbsp;&nbsp;&nbsp;&nbsp;: PPE Guard
@@ -357,6 +366,17 @@ def generate_daily_pdf(date_str: str, summary: dict) -> bytes:
     elements.append(charts_table)
     elements.append(Spacer(1, 14))
 
+        # Add Captured Violation Photographic Evidences
+    violation_dir = ROOT / "config" / "violations"
+    evidence_items = []
+    if recent:
+        for r in recent:
+            fname = r.get("image_filename")
+            if fname:
+                img_path = violation_dir / fname
+                if img_path.is_file():
+                    evidence_items.append((img_path, r))
+
     # SECTION 4: RECENT INCIDENT LOG TABLE
     elements.append(Paragraph("<b>4. RECENT VIOLATION INCIDENTS LOG</b>", section_heading_style))
     elements.append(Spacer(1, 6))
@@ -392,18 +412,21 @@ def generate_daily_pdf(date_str: str, summary: dict) -> bytes:
     if not recent:
         table_data.append(
             [
-                Paragraph("—", table_cell_style),
-                Paragraph("—", table_cell_style),
-                Paragraph("—", table_cell_style),
+                Paragraph("-", table_cell_style),
+                Paragraph("-", table_cell_style),
+                Paragraph("-", table_cell_style),
                 Paragraph("Zero violations recorded on this date.", table_cell_style),
-                Paragraph("—", table_cell_style),
+                Paragraph("-", table_cell_style),
                 Paragraph("100% Compliant", table_cell_style),
             ]
         )
     else:
-        for r in recent[:10]:
+        # If no snapshots, show 5 incidents so the whole report fits cleanly on 1 page!
+        # If snapshots exist, show 10 incidents on page 1, followed by page break for snapshots.
+        row_limit = 10 if evidence_items else 5
+        for r in recent[:row_limit]:
             viol_lbls = ", ".join(r.get("violations", [])) or "non-compliant"
-            conf_str = "—"
+            conf_str = "-"
             dets = r.get("details", [])
             if dets and isinstance(dets, list):
                 c = dets[0].get("confidence")
@@ -439,31 +462,22 @@ def generate_daily_pdf(date_str: str, summary: dict) -> bytes:
     )
     elements.append(KeepTogether(incidents_table))
 
-    # Add Captured Violation Photographic Evidences
-    violation_dir = ROOT / "config" / "violations"
-    evidence_items = []
-    if recent:
-        for r in recent:
-            fname = r.get("image_filename")
-            if fname:
-                img_path = violation_dir / fname
-                if img_path.is_file():
-                    evidence_items.append((img_path, r))
-
+    # SECTION 5: CAPTURED VIOLATION VISUAL EVIDENCES
     if evidence_items:
-        elements.append(Spacer(1, 14))
+        # Start snapshots on clean dedicated page
+        elements.append(PageBreak())
         elements.append(Paragraph("<b>5. CAPTURED SAFETY VIOLATION VISUAL EVIDENCES</b>", section_heading_style))
         elements.append(Spacer(1, 6))
 
         evidence_grid = []
         row_cells = []
-        for img_path, r in evidence_items[:6]:
+        for img_path, r in evidence_items[:16]:
             try:
                 img_widget = Image(str(img_path), width=260, height=146)
                 w_id = r.get("worker_id")
                 w_tag = f"Worker #{w_id}" if w_id is not None else "Worker"
                 caption = Paragraph(
-                    f"<b>{w_tag}</b> · {r.get('time', '')} · {', '.join(r.get('violations', []))}",
+                    f"<b>{w_tag}</b> &bull; {r.get('time', '')} &bull; {', '.join(r.get('violations', []))}",
                     table_cell_style,
                 )
                 cell_box = [img_widget, Spacer(1, 2), caption]
@@ -491,7 +505,28 @@ def generate_daily_pdf(date_str: str, summary: dict) -> bytes:
                     ]
                 )
             )
-            elements.append(KeepTogether(evidence_table))
+            elements.append(evidence_table)
+    else:
+        no_snap_style = ParagraphStyle(
+            "NoSnap",
+            parent=styles["Normal"],
+            fontName="Helvetica",
+            fontSize=8.5,
+            leading=12,
+            textColor=colors.HexColor("#64748B"),
+        )
+        sec5_box = [
+            Spacer(1, 10),
+            Paragraph("<b>5. CAPTURED SAFETY VIOLATION VISUAL EVIDENCES</b>", section_heading_style),
+            Spacer(1, 4),
+            Paragraph(
+                "&#8212; No violation snapshots captured for this reporting period. "
+                "Snapshots are automatically saved when a worker is detected without required PPE "
+                "while cameras are active. &#8212;",
+                no_snap_style,
+            ),
+        ]
+        elements.append(KeepTogether(sec5_box))
 
     # Build Document
     doc.build(elements)

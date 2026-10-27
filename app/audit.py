@@ -387,4 +387,182 @@ class AuditStore:
                 self.seed_reference_shift("2026-10-26")
 
 
+    def get_rolling_24h_summary(self, schedule_h: int, schedule_m: int) -> dict:
+        """
+        Collect data for the rolling 24-hour window ending exactly at (schedule_h:schedule_m) today.
+        Window: yesterday HH:MM -> today HH:MM
+        """
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        # End boundary = today's scheduled time
+        end_dt = now.replace(hour=schedule_h, minute=schedule_m, second=0, microsecond=0)
+        if end_dt > now:
+            # Hasn't hit today's time yet -> window ended yesterday at this time
+            end_dt -= timedelta(days=1)
+        start_dt = end_dt - timedelta(hours=24)
+
+        start_ts = start_dt.timestamp()
+        end_ts = end_dt.timestamp()
+        date_str = end_dt.strftime("%Y-%m-%d")
+
+        with self.lock, self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT
+                    COUNT(*) as total_inspections,
+                    SUM(CASE WHEN is_compliant = 1 THEN 1 ELSE 0 END) as compliant_count,
+                    SUM(CASE WHEN is_compliant = 0 THEN 1 ELSE 0 END) as violation_count,
+                    SUM(CASE WHEN goggles = 'violation' THEN 1 ELSE 0 END) as goggles_violations,
+                    SUM(CASE WHEN goggles = 'detected' THEN 1 ELSE 0 END) as goggles_compliant,
+                    SUM(CASE WHEN wrist = 'violation' THEN 1 ELSE 0 END) as wrist_violations,
+                    SUM(CASE WHEN wrist = 'detected' THEN 1 ELSE 0 END) as wrist_compliant,
+                    SUM(CASE WHEN shoes = 'violation' THEN 1 ELSE 0 END) as shoes_violations,
+                    SUM(CASE WHEN shoes = 'detected' THEN 1 ELSE 0 END) as shoes_compliant
+                FROM inspections
+                WHERE timestamp >= ? AND timestamp < ?
+            """, (start_ts, end_ts))
+            agg = dict(cursor.fetchone() or {})
+
+            hourly_cursor = conn.execute("""
+                SELECT hour,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN is_compliant = 1 THEN 1 ELSE 0 END) as compliant,
+                    SUM(CASE WHEN is_compliant = 0 THEN 1 ELSE 0 END) as violations
+                FROM inspections
+                WHERE timestamp >= ? AND timestamp < ?
+                GROUP BY hour ORDER BY hour ASC
+            """, (start_ts, end_ts))
+            hourly_map = {row["hour"]: dict(row) for row in hourly_cursor.fetchall()}
+
+            violations_cursor = conn.execute("""
+                SELECT id, timestamp, hour, minute, view, goggles, wrist, shoes,
+                       violation_types, raw_json, worker_id, image_filename
+                FROM inspections
+                WHERE timestamp >= ? AND timestamp < ? AND is_compliant = 0
+                ORDER BY timestamp DESC LIMIT 50
+            """, (start_ts, end_ts))
+            recent_violations = [
+                {
+                    "id": row["id"],
+                    "time": datetime.fromtimestamp(row["timestamp"]).strftime("%H:%M:%S"),
+                    "view": row["view"],
+                    "violations": row["violation_types"].split(",") if row["violation_types"] else [],
+                    "summary": {"goggles": row["goggles"], "wrist": row["wrist"], "shoes": row["shoes"]},
+                    "details": __import__("json").loads(row["raw_json"] or "[]"),
+                    "worker_id": row["worker_id"],
+                    "image_filename": row["image_filename"],
+                }
+                for row in violations_cursor.fetchall()
+            ]
+
+        total = agg.get("total_inspections") or 0
+        compliant = agg.get("compliant_count") or 0
+        violations = agg.get("violation_count") or 0
+        compliance_rate = round((compliant / total * 100), 1) if total > 0 else 100.0
+        violation_rate = round((violations / total * 100), 1) if total > 0 else 0.0
+
+        max_v = max((item.get("violations", 0) for item in hourly_map.values()), default=0)
+        peak_hour = None
+        if max_v > 0:
+            for h in range(24):
+                if hourly_map.get(h, {}).get("violations", 0) == max_v:
+                    peak_hour = f"{h:02d}:00"
+                    break
+
+        hourly_timeline = []
+        for h in range(24):
+            item = hourly_map.get(h, {"total": 0, "compliant": 0, "violations": 0})
+            v_count = item.get("violations", 0)
+            h_str = f"{h:02d}:00"
+            h_next = f"{(h+1)%24:02d}:00"
+            hourly_timeline.append({
+                "hour": h_str,
+                "slot": f"{h_str}-{h_next}",
+                "total": item.get("total", 0),
+                "compliant": item.get("compliant", 0),
+                "violations": v_count,
+                "is_peak": (v_count == max_v and max_v > 0 and h_str == peak_hour),
+            })
+
+        g_comp = agg.get("goggles_compliant") or 0
+        g_viol = agg.get("goggles_violations") or 0
+        g_total = g_comp + g_viol
+        g_rate = round((g_comp / g_total * 100), 1) if g_total > 0 else 100.0
+        w_comp = agg.get("wrist_compliant") or 0
+        w_viol = agg.get("wrist_violations") or 0
+        w_total = w_comp + w_viol
+        w_rate = round((w_comp / w_total * 100), 1) if w_total > 0 else 100.0
+        s_comp = agg.get("shoes_compliant") or 0
+        s_viol = agg.get("shoes_violations") or 0
+        s_total = s_comp + s_viol
+        s_rate = round((s_comp / s_total * 100), 1) if s_total > 0 else 100.0
+
+        violations_by_type = [
+            {"key": "shoes", "label": "No Safety Shoes", "count": s_viol,
+             "percentage": round((s_viol / violations * 100), 1) if violations > 0 else 0.0, "color": "#EF4444"},
+            {"key": "goggles", "label": "Goggles Not on Eyes", "count": g_viol,
+             "percentage": round((g_viol / violations * 100), 1) if violations > 0 else 0.0, "color": "#F97316"},
+            {"key": "wrist", "label": "Wrist Accessory", "count": w_viol,
+             "percentage": round((w_viol / violations * 100), 1) if violations > 0 else 0.0, "color": "#F59E0B"},
+        ]
+
+        return {
+            "date": date_str,
+            "window_start": start_dt.strftime("%Y-%m-%d %H:%M"),
+            "window_end": end_dt.strftime("%Y-%m-%d %H:%M"),
+            "total_inspections": total,
+            "compliant_count": compliant,
+            "violation_count": violations,
+            "compliance_rate": compliance_rate,
+            "violation_rate": violation_rate,
+            "peak_hour": peak_hour,
+            "peak_violations": max_v,
+            "violations_by_type": violations_by_type,
+            "categories": {
+                "goggles": {"compliant": g_comp, "violations": g_viol, "rate": g_rate},
+                "wrist": {"compliant": w_comp, "violations": w_viol, "rate": w_rate},
+                "shoes": {"compliant": s_comp, "violations": s_viol, "rate": s_rate},
+            },
+            "hourly": hourly_timeline,
+            "recent_violations": recent_violations,
+        }
+
+    def purge_old_data(self, keep_dates: list[str], violation_dir: Path = None):
+        """
+        Delete all DB rows and violation snapshot images older than the dates in keep_dates.
+        Keeps today and yesterday by default; caller passes which date_strs to retain.
+        """
+        from app.config import ROOT as _ROOT
+        viol_dir = violation_dir or (_ROOT / "config" / "violations")
+        with self.lock, self._get_connection() as conn:
+            # Get all image filenames BEFORE deleting so we can clean up photos
+            old_cursor = conn.execute(
+                "SELECT image_filename FROM inspections WHERE date_str NOT IN ({})".format(
+                    ",".join("?" * len(keep_dates))
+                ),
+                keep_dates,
+            )
+            old_images = [row["image_filename"] for row in old_cursor.fetchall() if row["image_filename"]]
+
+            # Delete DB rows
+            conn.execute(
+                "DELETE FROM inspections WHERE date_str NOT IN ({})".format(
+                    ",".join("?" * len(keep_dates))
+                ),
+                keep_dates,
+            )
+            conn.commit()
+
+        # Delete violation snapshot image files
+        deleted_imgs = 0
+        for fname in old_images:
+            fpath = viol_dir / fname
+            try:
+                fpath.unlink(missing_ok=True)
+                deleted_imgs += 1
+            except Exception as exc:
+                print(f"[AuditStore] Could not delete violation image {fname}: {exc}")
+
+        print(f"[AuditStore] Purged old data. Kept dates: {keep_dates}. Deleted {deleted_imgs} violation images.")
+
+
 audit_store = AuditStore()

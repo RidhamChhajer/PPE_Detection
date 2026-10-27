@@ -377,23 +377,26 @@ async def daily_scheduler_loop(audit_store, reporting_module):
                 # Scheduled delivery time reached!
                 pass
 
-            # Target time reached! Determine which report date to send:
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            # Target time reached!
+            # Build rolling 24h window: (schedule_time yesterday) -> (schedule_time today)
+            now = datetime.now()
+            sched_h, sched_m, norm_time_parsed = parse_schedule_time(norm_time)
+            window_end = now.replace(hour=sched_h, minute=sched_m, second=0, microsecond=0)
+            if window_end > now:
+                window_end -= timedelta(days=1)
+            window_start = window_end - timedelta(hours=24)
+            report_date = window_end.strftime("%Y-%m-%d")
 
-            # If early morning (< 09:00), deliver yesterday's full-day shift.
-            # If during daytime/evening, deliver today's active shift (fallback to yesterday if today empty).
-            if datetime.now().hour < 9:
-                report_date = yesterday_str
-            else:
-                today_summary = audit_store.get_daily_summary(today_str)
-                report_date = today_str if today_summary.get("total_inspections", 0) > 0 else yesterday_str
-
-            print(f"[MailerScheduler] Target time {norm_time} reached! Generating and emailing report for {report_date}...")
+            print(
+                f"[MailerScheduler] Target time {norm_time} reached! "
+                f"Rolling 24h window: {window_start.strftime('%Y-%m-%d %H:%M')} -> "
+                f"{window_end.strftime('%Y-%m-%d %H:%M')}"
+            )
 
             cfg = mailer_service.get_config()
             if cfg.get("enabled") and cfg.get("recipients"):
-                summary = audit_store.get_daily_summary(report_date)
+                # Use rolling 24h summary (exact window, not calendar day)
+                summary = audit_store.get_rolling_24h_summary(sched_h, sched_m)
                 pdf_bytes = reporting_module.generate_daily_pdf(report_date, summary)
                 ok, message = mailer_service.send_pdf_email(pdf_bytes, report_date)
 
@@ -406,6 +409,17 @@ async def daily_scheduler_loop(audit_store, reporting_module):
                     mailer_service._save_config(mailer_service.config)
 
                 print(f"[MailerScheduler] Automated delivery result: {message}")
+
+                if ok:
+                    # Purge data older than today and yesterday to save disk space.
+                    # Keep only the 2 most recent calendar days.
+                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+                    try:
+                        audit_store.purge_old_data(keep_dates=[today_str, yesterday_str])
+                        print(f"[MailerScheduler] Old data purged. Keeping: {today_str}, {yesterday_str}")
+                    except Exception as purge_exc:
+                        print(f"[MailerScheduler] Purge failed (non-critical): {purge_exc}")
             else:
                 print("[MailerScheduler] Skipping automated delivery: email service is disabled or has no recipients.")
 

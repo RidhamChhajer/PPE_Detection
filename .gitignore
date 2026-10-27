@@ -25,3 +25,4 @@ models/installation.json
 .aws/
 .codex/
 .agents/
+*.pt
