@@ -8,6 +8,7 @@ config/settings.json
 config/email_config.json
 config/*.db
 config/*.sqlite*
+config/violations/
 *.pdf
 models/*.pt
 *.lnk

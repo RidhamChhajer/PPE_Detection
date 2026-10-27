@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   XCircle,
   RefreshCw,
+  Camera,
 } from "lucide-react";
 import { request } from "./api";
 
@@ -1027,8 +1028,9 @@ export function Dashboard({ connected, notify }) {
                 <tr>
                   <th>Timestamp</th>
                   <th>Camera View</th>
+                  <th>Worker</th>
                   <th>Violation Observed</th>
-                  <th>Detection Detail</th>
+                  <th>Evidence Snapshot</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -1038,15 +1040,43 @@ export function Dashboard({ connected, notify }) {
                     <td><strong>{v.time}</strong></td>
                     <td style={{ textTransform: "capitalize" }}>{v.view} View</td>
                     <td>
+                      {v.worker_id != null ? (
+                        <span className="badge-pill" style={{ background: "#E0F2FE", color: "#0369A1", borderColor: "#BAE6FD" }}>
+                          Worker #{v.worker_id}
+                        </span>
+                      ) : (
+                        <span style={{ color: "#94A3B8" }}>—</span>
+                      )}
+                    </td>
+                    <td>
                       <span className="badge-pill danger">
                         <XCircle size={12} />
                         {(v.violations || []).map((x) => x.replace("no_goggles", "No Goggles").replace("not_empty_wrist", "Wrist Accessory").replace("NOT_SAFETY_SHOE", "Other Shoe")).join(", ") || "Violation"}
                       </span>
                     </td>
                     <td>
-                      {v.details && v.details[0]
-                        ? `${v.details[0].class} (${Math.round(v.details[0].confidence * 100)}% conf)`
-                        : "Observed"}
+                      {v.image_filename ? (
+                        <a
+                          href={`/api/violations/images/${encodeURIComponent(v.image_filename)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ui-button compact"
+                          style={{
+                            padding: "3px 8px",
+                            fontSize: "12px",
+                            textDecoration: "none",
+                            display: "inline-flex",
+                            gap: "5px",
+                            alignItems: "center",
+                          }}
+                          title="Open captured violation evidence frame in high-res"
+                        >
+                          <Camera size={13} />
+                          View Snapshot
+                        </a>
+                      ) : (
+                        <span style={{ color: "#94A3B8" }}>—</span>
+                      )}
                     </td>
                     <td>
                       <span className="badge-pill danger">Action Required</span>

@@ -366,6 +366,14 @@ def create_app(
             raise HTTPException(400, message)
         return {"success": True, "message": message, "date": target_date}
 
+    @app.get("/api/violations/images/{filename}")
+    def get_violation_image(filename: str):
+        violation_dir = (ROOT / "config" / "violations").resolve()
+        file_path = (violation_dir / filename).resolve()
+        if not file_path.is_file() or not str(file_path).startswith(str(violation_dir)):
+            raise HTTPException(404, "Violation image snapshot not found")
+        return FileResponse(file_path, media_type="image/jpeg")
+
     @app.get("/api/health")
     def health():
         return {"application": "ppe-guard", "status": "ready"}

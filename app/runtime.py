@@ -1,13 +1,14 @@
 import threading
 import time
 from collections import deque
+from datetime import datetime
 
 import cv2
 import numpy as np
 
 from app.cameras import CameraPool, frame_rate
-from app.config import VIEWS
-from app.inference import annotate, jpeg, summarize
+from app.config import ROOT, VIEWS
+from app.inference import annotate, associate_ppe_to_persons, jpeg, summarize
 from app.audit import audit_store
 
 
@@ -35,6 +36,15 @@ class Runtime:
         self.generation = 0
         self.empty = placeholder("Camera preview will appear here")
 
+        # Violation snapshot storage & single-pass tracking state
+        self.violation_dir = ROOT / "config" / "violations"
+        self.violation_dir.mkdir(parents=True, exist_ok=True)
+        self.captured_in_pass = {}       # track_id -> timestamp captured during current pass
+        self.track_last_seen = {}        # track_id -> timestamp last seen in frame
+        self.all_seen_track_ids = set()  # unique worker track IDs observed in session
+        self.all_violator_track_ids = set() # unique worker track IDs with violations
+        self.workers_current = 0
+
     def start(self):
         with self.lifecycle:
             if self.running:
@@ -50,6 +60,15 @@ class Runtime:
             self.stop_event = threading.Event()
             self.generation += 1
             self.running = True
+
+            # Reset tracking session counters
+            with self.lock:
+                self.captured_in_pass = {}
+                self.track_last_seen = {}
+                self.all_seen_track_ids = set()
+                self.all_violator_track_ids = set()
+                self.workers_current = 0
+
             self.preview_thread = threading.Thread(
                 target=self._preview, args=(self.stop_event,), daemon=True, name="live-preview"
             )
@@ -101,9 +120,10 @@ class Runtime:
                     detections = (
                         result.get("detections", []) if fresh and not result.get("error") else []
                     )
+                    persons = result.get("persons", []) if fresh and not result.get("error") else []
                 try:
-                    if detections:
-                        image = jpeg(annotate(frame, detections))
+                    if detections or persons:
+                        image = jpeg(annotate(frame, detections, persons))
                     else:
                         key = (id(camera), sequence)
                         if key not in raw:
@@ -139,23 +159,103 @@ class Runtime:
                     continue
                 seen[view] = sequence
                 detections, ms, error = [], None, self.detector.errors.get(view, "")
+                persons = []
+                enriched_persons = []
                 try:
+                    # 1. Person tracking with YOLO11n
+                    if view == "upper" and self.detector.person_model is not None:
+                        persons = self.detector.track_persons(frame)
+                        now_m = time.monotonic()
+                        current_ids = {p["track_id"] for p in persons if p.get("track_id") is not None}
+                        with self.lock:
+                            self.workers_current = len(persons)
+                            for tid in current_ids:
+                                self.all_seen_track_ids.add(tid)
+                                self.track_last_seen[tid] = now_m
+
+                            # Purge tracks that left the camera footage (absent for >= 3 seconds)
+                            # Once purged, if the same worker enters again later, their next pass CAN be captured!
+                            expired = [
+                                tid for tid, last_t in self.track_last_seen.items()
+                                if now_m - last_t >= 3.0
+                            ]
+                            for tid in expired:
+                                self.captured_in_pass.pop(tid, None)
+                                self.track_last_seen.pop(tid, None)
+
+                    # 2. PPE Detection
                     if view in self.detector.models:
                         detections, ms = self.detector.predict(view, frame, cfg)
                         error = ""
+
+                    # 3. Associate PPE items to tracked persons
+                    if persons:
+                        enriched_persons, _ = associate_ppe_to_persons(persons, detections)
+
+                    # 4. Handle Single-Pass Violation Capture
+                    now_ts = time.time()
+                    dt_now = datetime.fromtimestamp(now_ts)
+
+                    if enriched_persons:
+                        for p in enriched_persons:
+                            tid = p.get("track_id")
+                            if p["is_violator"] and tid is not None:
+                                should_capture = False
+                                with self.lock:
+                                    self.all_violator_track_ids.add(tid)
+                                    # Single pass check: capture ONLY ONCE while this worker is in frame
+                                    if tid not in self.captured_in_pass:
+                                        self.captured_in_pass[tid] = now_ts
+                                        should_capture = True
+
+                                if should_capture:
+                                    # Save annotated snapshot
+                                    annotated = annotate(frame, detections, enriched_persons)
+                                    dt_str = dt_now.strftime("%Y-%m-%d %H:%M:%S")
+                                    reasons = ", ".join(p.get("violations", []))
+                                    cv2.rectangle(annotated, (0, 0), (annotated.shape[1], 44), (0, 0, 0), -1)
+                                    cv2.putText(
+                                        annotated,
+                                        f"VIOLATION RECORDED | Worker #{tid} ({reasons}) | {dt_str}",
+                                        (15, 30),
+                                        cv2.FONT_HERSHEY_SIMPLEX,
+                                        0.65,
+                                        (0, 0, 255),
+                                        2,
+                                        cv2.LINE_AA,
+                                    )
+                                    filename = f"violation_{dt_now.strftime('%Y%m%d_%H%M%S')}_worker_{tid}_{view}.jpg"
+                                    filepath = self.violation_dir / filename
+                                    try:
+                                        cv2.imwrite(str(filepath), annotated)
+                                    except Exception as exc_img:
+                                        print(f"[Runtime] Could not write snapshot: {exc_img}")
+
+                                    # Record to audit database with worker_id and image_filename
+                                    audit_store.record(
+                                        view=view,
+                                        summary=summarize(detections),
+                                        detections=detections,
+                                        timestamp=now_ts,
+                                        worker_id=tid,
+                                        image_filename=filename,
+                                    )
+
                     state = {
                         "timestamp": time.monotonic(),
                         "detections": detections,
+                        "persons": enriched_persons if enriched_persons else persons,
                         "inference_ms": ms,
                         "error": error,
                         "latency_ms": round((time.monotonic() - stamp) * 1000, 1),
                     }
-                    if not error and detections is not None:
+                    if not error and detections is not None and not enriched_persons:
                         audit_store.record(view, summarize(detections), detections)
                 except Exception as exc:
                     state = {
                         "timestamp": time.monotonic(),
                         "detections": [],
+                        "persons": [],
                         "inference_ms": None,
                         "error": f"Inference failed: {exc}",
                         "latency_ms": None,
@@ -214,11 +314,21 @@ class Runtime:
                     "error": state.get("error", self.detector.errors.get(view, "")),
                     "stale": running and info["connected"] and not fresh,
                 }
+            total_workers = len(self.all_seen_track_ids)
+            violators = len(self.all_violator_track_ids)
+            violation_rate = (
+                round((violators / total_workers * 100), 1) if total_workers > 0 else 0.0
+            )
+
         return {
             "running": running,
             "gpu": dict(self.detector.gpu),
             "views": views,
             "config_warning": self.store.warning,
+            "workers_current": self.workers_current,
+            "workers_total": total_workers,
+            "workers_violators": violators,
+            "workers_violation_rate": violation_rate,
         }
 
     def frame(self, view):

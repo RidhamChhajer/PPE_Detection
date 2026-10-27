@@ -60,14 +60,96 @@ def summarize(detections):
     return result
 
 
-def annotate(frame, detections):
+def associate_ppe_to_persons(persons, detections):
+    """Associate PPE detections to person bounding boxes."""
+    enriched_persons = []
+    for p in persons:
+        enriched_persons.append({
+            "track_id": p.get("track_id"),
+            "box": p["box"],
+            "confidence": p.get("confidence", 1.0),
+            "ppe_items": [],
+            "violations": [],
+            "compliant": [],
+            "is_violator": False,
+        })
+
+    unassigned_ppe = []
+    for d in detections:
+        box = d["box"]
+        cx = (box[0] + box[2]) / 2.0
+        cy = (box[1] + box[3]) / 2.0
+
+        matched_person = None
+        best_dist = float("inf")
+        for p in enriched_persons:
+            px1, py1, px2, py2 = p["box"]
+            pad_x = (px2 - px1) * 0.12
+            pad_y = (py2 - py1) * 0.12
+            if (px1 - pad_x) <= cx <= (px2 + pad_x) and (py1 - pad_y) <= cy <= (py2 + pad_y):
+                pcx, pcy = (px1 + px2) / 2.0, (py1 + py2) / 2.0
+                dist = (cx - pcx) ** 2 + (cy - pcy) ** 2
+                if dist < best_dist:
+                    best_dist = dist
+                    matched_person = p
+
+        if matched_person:
+            matched_person["ppe_items"].append(d)
+            if d["class"] in BAD:
+                matched_person["violations"].append(d["class"])
+                matched_person["is_violator"] = True
+            else:
+                matched_person["compliant"].append(d["class"])
+        else:
+            unassigned_ppe.append(d)
+
+    return enriched_persons, unassigned_ppe
+
+
+def annotate(frame, detections, persons=None):
     image = frame.copy()
     scale = max(0.5, image.shape[1] / 1900)
+
+    # 1. Annotate Person Bounding Boxes
+    if persons:
+        for p in persons:
+            is_violator = p.get("is_violator", False)
+            tid = p.get("track_id")
+            # Red for violator, Green for compliant
+            p_color = (0, 0, 220) if is_violator else (34, 197, 94)
+            x1, y1, x2, y2 = map(int, p["box"])
+            cv2.rectangle(image, (x1, y1), (x2, y2), p_color, max(2, int(scale * 3)))
+
+            tid_str = f"Worker #{tid}" if tid is not None else "Worker"
+            if is_violator:
+                reasons = p.get("violations", [])
+                reason_labels = [LABELS.get(r, r) for r in reasons]
+                reason_str = ", ".join(reason_labels) if reason_labels else "Violation"
+                badge = f"VIOLATION: {tid_str} ({reason_str})"
+            else:
+                badge = f"COMPLIANT: {tid_str}"
+
+            (tw, th), _ = cv2.getTextSize(badge, cv2.FONT_HERSHEY_SIMPLEX, scale * 0.65, 2)
+            tx = max(0, min(x1, image.shape[1] - tw - 12))
+            ty = max(th + 12, min(y1, image.shape[0] - 1))
+            cv2.rectangle(image, (tx, ty - th - 10), (tx + tw + 10, ty), p_color, -1)
+            cv2.putText(
+                image,
+                badge,
+                (tx + 5, ty - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                scale * 0.65,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+    # 2. Annotate PPE Detections
     for d in detections:
         color = (71, 53, 188) if d["class"] in BAD else (100, 123, 8)
         x1, y1, x2, y2 = map(int, d["box"])
         cv2.rectangle(image, (x1, y1), (x2, y2), color, max(2, int(scale * 2)))
-        text = f"{LABELS[d['class']]} {d['confidence']:.0%}"
+        text = f"{LABELS.get(d['class'], d['class'])} {d['confidence']:.0%}"
         (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale * 0.6, 1)
         tx = max(0, min(x1, image.shape[1] - tw - 8))
         ty = max(th + 10, min(y1, image.shape[0] - 1))
@@ -98,6 +180,7 @@ class Detector:
     def __init__(self):
         self.lock = threading.RLock()
         self.models = {}
+        self.person_model = None
         self.wrist_slicer = None
         self.errors = {}
         self.device = "cuda:0"
@@ -116,7 +199,7 @@ class Detector:
                     self.gpu = {"ready": True, "name": torch.cuda.get_device_name(0), "error": ""}
                 else:
                     self.device = "cpu"
-                    self.gpu = {"ready": True, "name": "CPU (Intel Iris Xe)", "error": ""}
+                    self.gpu = {"ready": True, "name": "CPU", "error": ""}
             except ImportError:
                 self.gpu = {
                     "ready": False,
@@ -125,6 +208,18 @@ class Detector:
                 }
             except Exception as exc:
                 self.gpu = {"ready": False, "name": "GPU unavailable", "error": str(exc)}
+
+            # Load YOLO11n for Person Detection & Tracking
+            try:
+                from ultralytics import YOLO
+                person_model_path = ROOT / "models" / "yolo11n.pt"
+                src = str(person_model_path) if person_model_path.is_file() else "yolo11n.pt"
+                self.person_model = YOLO(src)
+                self.person_model.to(self.device)
+            except Exception as exc:
+                print(f"[Detector] Could not load person tracking model (yolo11n): {exc}")
+                self.person_model = None
+
             for view in CLASSES:
                 self.models.pop(view, None)
                 path = ROOT / "models" / f"{view}.pt"
@@ -154,6 +249,41 @@ class Detector:
                     self.errors[view] = ""
                 except Exception as exc:
                     self.errors[view] = f"Cannot load {view} PPE model: {exc}"
+
+    def track_persons(self, frame, conf=0.45):
+        """Detect and track persons with persistent IDs across frames."""
+        with self.lock:
+            if self.person_model is None:
+                return []
+            try:
+                results = self.person_model.track(
+                    frame,
+                    persist=True,
+                    classes=[0],
+                    tracker="bytetrack.yaml",
+                    conf=conf,
+                    verbose=False,
+                    device=self.device,
+                )
+                persons = []
+                if results and len(results) > 0 and results[0].boxes is not None:
+                    boxes = results[0].boxes.xyxy.cpu().tolist()
+                    confs = results[0].boxes.conf.cpu().tolist()
+                    track_ids = (
+                        results[0].boxes.id.int().cpu().tolist()
+                        if results[0].boxes.id is not None
+                        else [None] * len(boxes)
+                    )
+                    for box, tid, score in zip(boxes, track_ids, confs):
+                        persons.append({
+                            "track_id": int(tid) if tid is not None else None,
+                            "box": [round(c, 1) for c in box],
+                            "confidence": float(score),
+                        })
+                return persons
+            except Exception as exc:
+                print(f"[Detector] Person tracking error: {exc}")
+                return []
 
     def sliced_wrists(self, crop, cfg):
         from sahi.models.ultralytics import UltralyticsDetectionModel

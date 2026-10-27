@@ -50,33 +50,38 @@ export default function Live({
       : "unknown";
   };
   const ready = connected && !!status;
+  const workersTotal = status?.workers_total ?? 0;
+  const workersViolators = status?.workers_violators ?? 0;
+  const workersViolationRate = status?.workers_violation_rate != null ? `${status.workers_violation_rate}%` : "0.0%";
+  const workersCurrent = status?.workers_current ?? 0;
+
   const metrics = [
     [
       Users,
       "Total workers detected",
-      "—",
-      "Coming soon",
+      status?.running ? workersTotal : "—",
+      status?.running ? "Unique workers tracked" : "Offline",
       "blue",
     ],
     [
       AlertTriangle,
       "Violations",
-      "—",
-      "Coming soon",
+      status?.running ? workersViolators : "—",
+      status?.running ? "Violators flagged" : "Offline",
       "red",
     ],
     [
       Percent,
       "Violation percentage",
-      "—",
-      "Coming soon",
+      status?.running ? workersViolationRate : "—",
+      status?.running ? "Of total workers" : "Offline",
       "blue",
     ],
     [
       Users,
       "Workers currently in camera",
-      "—",
-      "Camera 1 · Coming soon",
+      status?.running ? workersCurrent : "—",
+      status?.running ? "Camera 1 (Upper)" : "Offline",
       "green",
     ],
   ];

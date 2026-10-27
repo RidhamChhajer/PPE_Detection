@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
+from app.config import ROOT
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -408,9 +409,11 @@ def generate_daily_pdf(date_str: str, summary: dict) -> bytes:
                 c = dets[0].get("confidence")
                 if c is not None:
                     conf_str = f"{c*100:.1f}%"
+            worker_id = r.get("worker_id")
+            w_label = f"#{r.get('id', '')}" + (f" (W#{worker_id})" if worker_id is not None else "")
             table_data.append(
                 [
-                    Paragraph(f"#{r.get('id', '')}", table_cell_style),
+                    Paragraph(w_label, table_cell_style),
                     Paragraph(str(r.get("time", "")), table_cell_style),
                     Paragraph(str(r.get("view", "")).capitalize(), table_cell_style),
                     Paragraph(viol_lbls, table_cell_style),
@@ -419,7 +422,7 @@ def generate_daily_pdf(date_str: str, summary: dict) -> bytes:
                 ]
             )
 
-    incidents_table = Table(table_data, colWidths=[60, 60, 75, 202, 75, 75])
+    incidents_table = Table(table_data, colWidths=[65, 55, 75, 202, 75, 75])
     incidents_table.setStyle(
         TableStyle(
             [
@@ -435,6 +438,60 @@ def generate_daily_pdf(date_str: str, summary: dict) -> bytes:
         )
     )
     elements.append(KeepTogether(incidents_table))
+
+    # Add Captured Violation Photographic Evidences
+    violation_dir = ROOT / "config" / "violations"
+    evidence_items = []
+    if recent:
+        for r in recent:
+            fname = r.get("image_filename")
+            if fname:
+                img_path = violation_dir / fname
+                if img_path.is_file():
+                    evidence_items.append((img_path, r))
+
+    if evidence_items:
+        elements.append(Spacer(1, 14))
+        elements.append(Paragraph("<b>5. CAPTURED SAFETY VIOLATION VISUAL EVIDENCES</b>", section_heading_style))
+        elements.append(Spacer(1, 6))
+
+        evidence_grid = []
+        row_cells = []
+        for img_path, r in evidence_items[:6]:
+            try:
+                img_widget = Image(str(img_path), width=260, height=146)
+                w_id = r.get("worker_id")
+                w_tag = f"Worker #{w_id}" if w_id is not None else "Worker"
+                caption = Paragraph(
+                    f"<b>{w_tag}</b> · {r.get('time', '')} · {', '.join(r.get('violations', []))}",
+                    table_cell_style,
+                )
+                cell_box = [img_widget, Spacer(1, 2), caption]
+                row_cells.append(cell_box)
+                if len(row_cells) == 2:
+                    evidence_grid.append(row_cells)
+                    row_cells = []
+            except Exception as exc:
+                print(f"[Reporting] Error embedding snapshot image: {exc}")
+
+        if row_cells:
+            row_cells.append([Paragraph("", table_cell_style)])
+            evidence_grid.append(row_cells)
+
+        if evidence_grid:
+            evidence_table = Table(evidence_grid, colWidths=[273, 273])
+            evidence_table.setStyle(
+                TableStyle(
+                    [
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                        ("TOPPADDING", (0, 0), (-1, -1), 3),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ]
+                )
+            )
+            elements.append(KeepTogether(evidence_table))
 
     # Build Document
     doc.build(elements)

@@ -7,11 +7,23 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import ssl
 import urllib.error
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def get_ssl_context():
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
 
 
 def sha256(path):
@@ -36,8 +48,9 @@ def download(url, target, expected_hash):
     descriptor, temporary = tempfile.mkstemp(
         prefix=target.name + ".", suffix=".partial", dir=target.parent
     )
+    context = get_ssl_context()
     try:
-        with os.fdopen(descriptor, "wb") as output, urlopen(url, timeout=60) as source:
+        with os.fdopen(descriptor, "wb") as output, urlopen(url, timeout=60, context=context) as source:
             for chunk in iter(lambda: source.read(1024 * 1024), b""):
                 output.write(chunk)
         if sha256(temporary) != expected_hash:
@@ -58,6 +71,25 @@ def main():
         target = ROOT / "models" / name
         download(manifest["release_base_url"] + "/" + name, target, model["sha256"])
         print(f"Verified {target.name}")
+
+    # Ensure yolo11n.pt is downloaded for person detection & tracking
+    person_target = ROOT / "models" / "yolo11n.pt"
+    if not person_target.exists():
+        print("Downloading yolo11n.pt for worker detection and tracking...")
+        person_url = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt"
+        descriptor, temporary = tempfile.mkstemp(
+            prefix="yolo11n.", suffix=".partial", dir=person_target.parent
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as output, urlopen(person_url, timeout=60, context=get_ssl_context()) as source:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    output.write(chunk)
+            os.replace(temporary, person_target)
+            print("Verified yolo11n.pt")
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+    else:
+        print("Verified yolo11n.pt")
 
 
 if __name__ == "__main__":

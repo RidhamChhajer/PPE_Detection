@@ -40,15 +40,35 @@ class AuditStore:
                     is_compliant INTEGER NOT NULL,
                     violation_types TEXT NOT NULL,
                     detections_count INTEGER NOT NULL,
-                    raw_json TEXT
+                    raw_json TEXT,
+                    worker_id INTEGER,
+                    image_filename TEXT
                 )
                 """
             )
+            # Automatic schema migration for existing databases
+            try:
+                conn.execute("ALTER TABLE inspections ADD COLUMN worker_id INTEGER")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE inspections ADD COLUMN image_filename TEXT")
+            except sqlite3.OperationalError:
+                pass
+
             conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON inspections(date_str)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON inspections(timestamp)")
             conn.commit()
 
-    def record(self, view: str, summary: dict, detections: list, timestamp: float = None):
+    def record(
+        self,
+        view: str,
+        summary: dict,
+        detections: list,
+        timestamp: float = None,
+        worker_id: int = None,
+        image_filename: str = None,
+    ):
         """Record a live inspection event from the detector."""
         now_ts = timestamp or time.time()
         dt = datetime.fromtimestamp(now_ts)
@@ -86,8 +106,8 @@ class AuditStore:
                     """
                     INSERT INTO inspections (
                         timestamp, date_str, hour, minute, view, goggles, wrist, shoes,
-                        is_compliant, violation_types, detections_count, raw_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        is_compliant, violation_types, detections_count, raw_json, worker_id, image_filename
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now_ts,
@@ -102,6 +122,8 @@ class AuditStore:
                         violations_str,
                         len(detections),
                         json.dumps([{"class": d["class"], "confidence": round(d["confidence"], 2)} for d in detections]),
+                        worker_id,
+                        image_filename,
                     ),
                 )
                 conn.commit()
@@ -160,7 +182,7 @@ class AuditStore:
             # Recent violation events
             violations_cursor = conn.execute(
                 """
-                SELECT id, timestamp, hour, minute, view, goggles, wrist, shoes, violation_types, raw_json
+                SELECT id, timestamp, hour, minute, view, goggles, wrist, shoes, violation_types, raw_json, worker_id, image_filename
                 FROM inspections
                 WHERE date_str = ? AND is_compliant = 0
                 ORDER BY timestamp DESC
@@ -180,6 +202,8 @@ class AuditStore:
                         "shoes": row["shoes"],
                     },
                     "details": json.loads(row["raw_json"] or "[]"),
+                    "worker_id": row["worker_id"],
+                    "image_filename": row["image_filename"],
                 }
                 for row in violations_cursor.fetchall()
             ]
