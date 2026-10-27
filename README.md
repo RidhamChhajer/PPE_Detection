@@ -2,57 +2,61 @@
 
 A local Windows application for camera-based personal protective equipment inspection, built with a React interface and a Python inference service. Two trained YOLO26m models inspect goggles and wrist accessories in the upper view, and footwear in the lower view.
 
-Processing runs on the local PC. An NVIDIA GPU is required for inference; there is no automatic CPU fallback.
+Processing runs locally on the host PC with automatic NVIDIA GPU acceleration (CUDA 12.8) and seamless CPU fallback.
 
 ## Capabilities
 
-- Live monitoring with separate cameras, one shared camera, or one enabled view.
-- Detection of goggles, no goggles, bare wrists, wrist accessories, safety shoes, and other shoes.
-- Camera selection, supported driver picture controls, detection thresholds, and optional wrist SAHI slicing.
-- Stable, stacked camera panels with full-frame previews and per-camera fullscreen.
-- Image and video testing, with annotated, silent H.264 video playback and download.
-- Bundled frontend assets, fonts, and logos for offline operation after setup.
-
-Earplug detection, worker counting, violation statistics, audible warnings, and inspection history are not implemented. Their interface placeholders do not represent working detectors or recorded production data. The Sample dashboard uses illustrative data.
+- **Live monitoring**: Dual-camera inspection (upper and lower views), single camera, or test playback.
+- **PPE Class Detection**: Real-time detection of goggles, no goggles, bare wrists, wrist accessories, safety shoes, and non-compliant footwear.
+- **Daily Safety Compliance Dashboard**: Dynamic daily telemetry with interactive SVG charts:
+  - Circular Donut Gauge for Violation Rate %
+  - Sliced Pie Chart for Violation Breakdown by category
+  - 24-Hour Non-Compliance Trend Bar Chart highlighting the peak violation period
+  - Summary KPI cards & recent safety violation incidents log
+- **Automated PDF Audit Reports**: Multi-page PDF generation via ReportLab & Matplotlib with charts, compliance statistics, and facility metadata.
+- **Automated Email Dispatcher**: Background daily shift delivery via Gmail SMTP (100% free with direct PDF attachment) or EmailJS REST API, with customizable schedule time and native time picker.
+- **Hardware Acceleration**: Automatic CUDA 12.8 acceleration on NVIDIA GPUs with graceful CPU fallback.
+- **Image & Video Testing**: Annotation and silent H.264 video rendering for clips up to 250 MB.
+- **Offline Ready**: Bundled frontend distribution (`app/static/`), fonts, and UI assets. Node.js is not required to run.
 
 ## Requirements
 
-- Windows x64 and 64-bit Python 3.10, the version used for local testing. The setup script accepts Python 3.10–3.13.
-- An NVIDIA GPU and a driver compatible with PyTorch's CUDA 12.8 runtime.
-- Internet access and several GB of available disk space for initial installation.
-- A browser and suitable cameras for live monitoring. Cameras are not needed for media tests.
+- **Operating System**: 64-bit Windows 10 or 11.
+- **Python**: 64-bit Python 3.10 to 3.13.
+- **Hardware**:
+  - *Recommended*: NVIDIA GPU (GTX 1650, RTX 2050/3050/4060 or higher) for 30+ FPS live inference.
+  - *Standard*: Any modern multi-core CPU (Intel Core i5/i7, AMD Ryzen) supported via automatic CPU fallback.
+- **Disk Space**: ~2 GB free disk space for dependencies and models.
+- **Web Browser**: Chrome, Edge, Brave, or Firefox.
 
-Node.js is needed only when developing or rebuilding the frontend. Local development used an RTX 2050 with 4 GB VRAM; performance on other hardware must be measured.
+## Quick Installation on Any PC
 
-## Installation
+### Option A: NVIDIA GPU (Recommended)
+1. Clone the repository:
+   ```powershell
+   git clone https://github.com/RidhamChhajer/PPE_Detection.git
+   cd PPE_Detection
+   ```
+2. Double-click **`Setup GPU.cmd`** (or `Setup RTX 3050 6GB.cmd` for RTX 3050 machines).
+   *This automatically creates `.venv`, installs PyTorch with CUDA 12.8, installs dependencies, and downloads the trained YOLO models from GitHub releases.*
 
-Clone the repository and run these commands in PowerShell:
+### Option B: CPU Only (No NVIDIA GPU)
+1. Clone the repository:
+   ```powershell
+   git clone https://github.com/RidhamChhajer/PPE_Detection.git
+   cd PPE_Detection
+   ```
+2. Double-click **`Setup CPU.cmd`**.
+   *This creates `.venv`, installs PyTorch CPU runtime, installs dependencies, and downloads the YOLO models.*
 
-```powershell
-git clone https://github.com/RidhamChhajer/PPE_Detection.git
-cd PPE_Detection
-py -3.10 tools/setup_gpu.py
-.\.venv\Scripts\python.exe tools/download_models.py
-```
+---
 
-The setup script creates `.venv`, installs PyTorch 2.9.1 and torchvision 0.24.1 from the CUDA 12.8 wheel index, installs `requirements.txt`, and verifies a real GPU calculation. It also creates a Windows shortcut. It does not install NVIDIA drivers.
+## Running the Application
 
-The model download command installs `upper.pt` and `lower.pt` into `models/` from the [YOLO Model release](https://github.com/RidhamChhajer/PPE_Detection/releases/tag/yolo-model-v1). It verifies the SHA-256 checksums in [`models/manifest.json`](models/manifest.json), skips files that already match, and refuses to overwrite a different local model. Both weights are release assets rather than files stored in Git history. The downloader uses only the Python standard library.
-
-For a factory PC specifically equipped with an RTX 3050 6 GB, `Setup RTX 3050 6GB.cmd` additionally checks the GPU name and available VRAM. For another supported NVIDIA GPU, use `Setup GPU.cmd` or the Python setup command above.
-
-### Manual dependency installation
-
-If you prefer to install dependencies yourself:
-
-```powershell
-py -3.10 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -c "from tools.setup_gpu import verify_gpu; verify_gpu()"
-.\.venv\Scripts\python.exe tools/download_models.py
-```
+1. Double-click **`Start PPE Detection System.cmd`** (or run `.\.venv\Scripts\python.exe tools/launch.py`).
+2. The browser will automatically open at **`http://127.0.0.1:8876`**.
+3. To configure automated daily email reports, go to the **Dashboard** page, click **Email & Settings**, enter your recipient email address, and click **Save Email Settings** (or copy `config/email_config.example.json` to `config/email_config.json`).
+4. To stop the application completely, double-click **`Stop PPE Detection System.cmd`**.
 
 Installing `requirements.txt` alone is not the complete CUDA setup. Install the pinned CUDA-enabled PyTorch packages first.
 

@@ -80,10 +80,15 @@ def main():
         + "';$s.Save()"
     )
     run("powershell", "-NoProfile", "-Command", script)
+    upper_pt = ROOT / "models" / "upper.pt"
+    lower_pt = ROOT / "models" / "lower.pt"
+    if not upper_pt.exists() or not lower_pt.exists():
+        print("\nDownloading required YOLO models from release...")
+        run(PYTHON, "tools/download_models.py")
+
     print(
         "\nGPU setup complete. Double-click PPE Detection System.lnk or Start PPE Detection System.cmd."
     )
-    print("Run .venv\\Scripts\\python.exe tools\\download_models.py to install the trained models.")
 
 
 if __name__ == "__main__":
