@@ -163,7 +163,7 @@ class Runtime:
                 enriched_persons = []
                 try:
                     # 1. Person tracking with YOLO11n
-                    if view == "upper" and self.detector.person_model is not None:
+                    if view == "upper" and getattr(self.detector, "person_model", None) is not None:
                         persons = self.detector.track_persons(frame)
                         now_m = time.monotonic()
                         current_ids = {p["track_id"] for p in persons if p.get("track_id") is not None}
@@ -240,6 +240,17 @@ class Runtime:
                                         worker_id=tid,
                                         image_filename=filename,
                                     )
+                            elif not p["is_violator"] and tid is not None:
+                                # Record compliant worker inspection (throttled by audit_store)
+                                audit_store.record(
+                                    view=view,
+                                    summary=summarize(detections),
+                                    detections=detections,
+                                    timestamp=now_ts,
+                                    worker_id=tid,
+                                )
+                    elif not error and detections is not None:
+                        audit_store.record(view, summarize(detections), detections, timestamp=now_ts)
 
                     state = {
                         "timestamp": time.monotonic(),
@@ -249,8 +260,7 @@ class Runtime:
                         "error": error,
                         "latency_ms": round((time.monotonic() - stamp) * 1000, 1),
                     }
-                    if not error and detections is not None and not enriched_persons:
-                        audit_store.record(view, summarize(detections), detections)
+                    # Audit logging handled above for both workers and views
                 except Exception as exc:
                     state = {
                         "timestamp": time.monotonic(),

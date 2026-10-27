@@ -11,7 +11,7 @@ DB_PATH = ROOT / "config" / "audit_log.db"
 
 class AuditStore:
     def __init__(self, db_path=None):
-        self.db_path = db_path or DB_PATH
+        self.db_path = Path(db_path) if db_path else DB_PATH
         self.lock = threading.RLock()
         self.last_recorded = {}
         self._init_db()
