@@ -107,44 +107,16 @@ def associate_ppe_to_persons(persons, detections):
 
 
 def annotate(frame, detections, persons=None):
+    """Draw PPE bounding boxes on the frame.
+    Person boxes are intentionally NOT drawn — tracking still runs internally
+    for single-pass deduplication, but the person rectangle/badge is hidden
+    to keep the live feed clean (user preference).
+    """
     image = frame.copy()
     scale = max(0.5, image.shape[1] / 1900)
 
-    # 1. Annotate Person Bounding Boxes
-    if persons:
-        for p in persons:
-            is_violator = p.get("is_violator", False)
-            tid = p.get("track_id")
-            # Red for violator, Green for compliant
-            p_color = (0, 0, 220) if is_violator else (34, 197, 94)
-            x1, y1, x2, y2 = map(int, p["box"])
-            cv2.rectangle(image, (x1, y1), (x2, y2), p_color, max(2, int(scale * 3)))
-
-            tid_str = f"Worker #{tid}" if tid is not None else "Worker"
-            if is_violator:
-                reasons = p.get("violations", [])
-                reason_labels = [LABELS.get(r, r) for r in reasons]
-                reason_str = ", ".join(reason_labels) if reason_labels else "Violation"
-                badge = f"VIOLATION: {tid_str} ({reason_str})"
-            else:
-                badge = f"COMPLIANT: {tid_str}"
-
-            (tw, th), _ = cv2.getTextSize(badge, cv2.FONT_HERSHEY_SIMPLEX, scale * 0.65, 2)
-            tx = max(0, min(x1, image.shape[1] - tw - 12))
-            ty = max(th + 12, min(y1, image.shape[0] - 1))
-            cv2.rectangle(image, (tx, ty - th - 10), (tx + tw + 10, ty), p_color, -1)
-            cv2.putText(
-                image,
-                badge,
-                (tx + 5, ty - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                scale * 0.65,
-                (255, 255, 255),
-                2,
-                cv2.LINE_AA,
-            )
-
-    # 2. Annotate PPE Detections
+    # persons arg is accepted for API compatibility but person boxes are not rendered.
+    # PPE detections (goggles, wrist accessories, shoes) are always drawn.
     for d in detections:
         color = (71, 53, 188) if d["class"] in BAD else (100, 123, 8)
         x1, y1, x2, y2 = map(int, d["box"])
