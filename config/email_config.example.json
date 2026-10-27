@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "service": "smtp",
+  "schedule_time": "05:30",
+  "recipients": [
+    "safety-officer@factory.internal"
+  ],
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587,
+  "smtp_user": "your-email@gmail.com",
+  "smtp_pass": "your-gmail-app-password",
+  "smtp_use_tls": true,
+  "emailjs_service_id": "",
+  "emailjs_template_id": "",
+  "emailjs_public_key": "",
+  "emailjs_private_key": "",
+  "last_sent_at": null,
+  "last_status": "Ready | Scheduled daily at 05:30 AM"
+}

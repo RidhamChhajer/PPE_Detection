@@ -921,3 +921,382 @@ html {
     font-size: 22px;
   }
 }
+
+/* Daily Compliance Dashboard Styles */
+.dashboard-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  background: var(--bg-card);
+  padding: 16px 20px;
+  border-radius: 18px;
+  border: 1px solid var(--border-card);
+  box-shadow: var(--shadow-card);
+  margin-bottom: 20px;
+}
+.dashboard-date-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dashboard-date-group select {
+  min-height: 40px;
+  padding: 8px 14px;
+  font-weight: 700;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-page);
+  color: var(--text-main);
+  cursor: pointer;
+}
+.dashboard-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.hourly-chart {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(36px, 1fr));
+  gap: 8px;
+  align-items: flex-end;
+  min-height: 140px;
+  padding: 16px 8px 8px;
+  background: var(--bg-page);
+  border-radius: 14px;
+  margin-top: 14px;
+}
+.hourly-bar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+}
+.hourly-bar-fill {
+  width: 100%;
+  max-width: 28px;
+  background: var(--color-green-primary);
+  border-radius: 6px 6px 0 0;
+  min-height: 4px;
+  transition: height 0.3s ease;
+  position: relative;
+}
+.hourly-bar-fill.has-violations {
+  background: #f97316;
+}
+.hourly-bar-fill.high-violations {
+  background: var(--ui-danger);
+}
+.hourly-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: 6px;
+  white-space: nowrap;
+}
+.violations-table-wrap {
+  overflow-x: auto;
+  margin-top: 14px;
+}
+.violations-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+.violations-table th {
+  padding: 10px 14px;
+  background: var(--bg-page);
+  color: var(--text-muted);
+  font-weight: 700;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.violations-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-card);
+  color: var(--text-main);
+}
+.badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.badge-pill.danger {
+  background: var(--color-red-light);
+  color: var(--ui-danger);
+  border: 1px solid var(--color-red-border);
+}
+.badge-pill.success {
+  background: var(--color-green-light);
+  color: var(--ui-action);
+  border: 1px solid var(--color-green-border);
+}
+.email-panel {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 18px;
+  padding: 20px;
+  margin-top: 20px;
+  animation: fadeIn 0.2s ease-in-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Donut Chart Component */
+.donut-chart-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 6px auto;
+}
+.donut-center-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-main, #0f172a);
+}
+.operator-card.donut-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 14px;
+}
+
+/* 2-Column Charts Grid for Sections 2 & 3 */
+.dashboard-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: 20px;
+  margin-top: 20px;
+}
+@media (max-width: 980px) {
+  .dashboard-charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Section 2: Pie Chart & Legend */
+.pie-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding-top: 10px;
+}
+.pie-chart-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.pie-slice {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  cursor: pointer;
+}
+.pie-slice:hover {
+  opacity: 0.92;
+  transform: scale(1.02);
+  transform-origin: center;
+}
+.pie-legend-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 8px;
+}
+.pie-legend-table tr {
+  border-bottom: 1px solid var(--border-subtle, #f1f5f9);
+}
+.pie-legend-table td {
+  padding: 8px 6px;
+  color: var(--text-main, #1e293b);
+}
+.pie-legend-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.pie-legend-val {
+  text-align: right;
+  font-weight: 700;
+}
+
+.pie-zero-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  width: 100%;
+}
+.pie-zero-circle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: #f0fdf4;
+  border: 4px solid #10b981;
+  color: #065f46;
+}
+.pie-zero-circle strong {
+  font-size: 14px;
+  font-weight: 800;
+}
+.pie-zero-circle span {
+  font-size: 11px;
+  color: #047857;
+}
+
+/* Section 3: Hourly Non-Compliance Trend Chart */
+.trend-chart-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 290px;
+  position: relative;
+  padding-top: 28px;
+}
+.trend-y-axis {
+  position: absolute;
+  left: 0;
+  top: 30px;
+  bottom: 40px;
+  width: 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding-right: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
+  border-right: 1px solid var(--border-card, #e2e8f0);
+}
+.y-axis-title {
+  position: absolute;
+  left: -130px;
+  top: 90px;
+  transform: rotate(-90deg);
+  transform-origin: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted, #475569);
+  white-space: nowrap;
+}
+.y-ticks {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
+}
+.trend-bars-area {
+  margin-left: 45px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  height: 200px;
+  border-bottom: 1px solid var(--border-card, #e2e8f0);
+  padding: 0 8px;
+  gap: 6px;
+}
+.trend-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+  position: relative;
+}
+.trend-bar-rect {
+  width: 80%;
+  max-width: 32px;
+  border-radius: 4px 4px 0 0;
+  transition: height 0.4s ease;
+  min-height: 4px;
+}
+.trend-bar-rect.normal-bar {
+  background: #60a5fa;
+}
+.trend-bar-rect.peak-bar {
+  background: #ef4444;
+}
+.bar-count-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-main, #1e293b);
+  margin-bottom: 4px;
+}
+.trend-x-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--text-muted, #475569);
+  margin-top: 8px;
+  white-space: pre-line;
+  text-align: center;
+  line-height: 1.1;
+}
+.peak-callout-badge {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  z-index: 5;
+}
+.peak-arrow {
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 900;
+}
+.trend-x-axis-title {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted, #475569);
+  margin-top: 12px;
+}
+
+

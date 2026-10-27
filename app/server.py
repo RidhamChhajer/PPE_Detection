@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -56,9 +57,19 @@ def create_app(
                 stale.unlink(missing_ok=True)
             except PermissionError:
                 pass
+        scheduler_task = None
         if initialize:
             await asyncio.to_thread(detector.load)
+            try:
+                from app.audit import audit_store
+                from app import reporting
+                from app.mailer import daily_scheduler_loop
+                scheduler_task = asyncio.create_task(daily_scheduler_loop(audit_store, reporting))
+            except Exception as exc:
+                print(f"[Server] Could not initialize scheduler: {exc}")
         yield
+        if scheduler_task:
+            scheduler_task.cancel()
         await asyncio.to_thread(media.stop, True)
         await asyncio.to_thread(runtime.stop)
 
@@ -298,6 +309,62 @@ def create_app(
         except RuntimeError as exc:
             raise HTTPException(409, str(exc))
         return media.snapshot()
+
+    @app.get("/api/dashboard/dates")
+    def get_dashboard_dates():
+        from app.audit import audit_store
+        return {"dates": audit_store.get_available_dates()}
+
+    @app.get("/api/dashboard/summary")
+    def get_dashboard_summary(date: str = None):
+        from app.audit import audit_store
+        target_date = date or datetime.now().strftime("%Y-%m-%d")
+        return audit_store.get_daily_summary(target_date)
+
+    @app.get("/api/reports/daily/pdf")
+    def download_daily_pdf(date: str = None):
+        from app.audit import audit_store
+        from app.reporting import generate_daily_pdf
+        target_date = date or datetime.now().strftime("%Y-%m-%d")
+        summary = audit_store.get_daily_summary(target_date)
+        pdf_bytes = generate_daily_pdf(target_date, summary)
+        return Response(
+            pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="ppe-daily-report-{target_date}.pdf"',
+                "Content-Length": str(len(pdf_bytes)),
+            },
+        )
+
+    @app.get("/api/reports/email-config")
+    def get_email_config():
+        from app.mailer import mailer_service
+        return mailer_service.get_config()
+
+    @app.put("/api/reports/email-config")
+    async def save_email_config(request: Request):
+        from app.mailer import mailer_service
+        data = await request.json()
+        return mailer_service.update_config(data)
+
+    @app.post("/api/reports/send-email")
+    async def trigger_send_email(request: Request):
+        from app.audit import audit_store
+        from app.reporting import generate_daily_pdf
+        from app.mailer import mailer_service
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        target_date = body.get("date") or datetime.now().strftime("%Y-%m-%d")
+        recipients = body.get("recipients")
+        summary = audit_store.get_daily_summary(target_date)
+        pdf_bytes = generate_daily_pdf(target_date, summary)
+        ok, message = mailer_service.send_pdf_email(pdf_bytes, target_date, recipients=recipients)
+        if not ok:
+            raise HTTPException(400, message)
+        return {"success": True, "message": message, "date": target_date}
 
     @app.get("/api/health")
     def health():

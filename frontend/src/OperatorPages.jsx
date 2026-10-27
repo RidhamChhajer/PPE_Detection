@@ -9,6 +9,13 @@ import {
   AlertTriangle,
   RotateCcw,
   Save,
+  Mail,
+  Calendar,
+  Send,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  RefreshCw,
 } from "lucide-react";
 import { request } from "./api";
 
@@ -319,57 +326,741 @@ export function TestMedia({ connected }) {
   );
 }
 
-export function Dashboard() {
+function DonutChart({ percentage, size = 88, strokeWidth = 10, color = "#EF4444" }) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct = Math.max(0, Math.min(100, Number(percentage) || 0));
+  const offset = circumference - (pct / 100) * circumference;
+
+  return (
+    <div className="donut-chart-wrap" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="#E2E8F0"
+          strokeWidth={strokeWidth}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={pct > 0 ? color : "#10B981"}
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          style={{ transition: "stroke-dashoffset 0.6s ease" }}
+        />
+      </svg>
+      <div className="donut-center-text">
+        <strong>{pct.toFixed(1)}%</strong>
+      </div>
+    </div>
+  );
+}
+
+function ViolationPieChart({ items = [], totalViolations = 0, size = 210 }) {
+  const activeItems = items.filter((i) => (i.count || 0) > 0);
+
+  if (!activeItems || totalViolations === 0 || activeItems.length === 0) {
+    return (
+      <div className="pie-zero-state">
+        <div className="pie-zero-circle">
+          <CheckCircle2 size={36} color="#10B981" />
+          <strong>100% Compliant</strong>
+          <span>Zero Violations</span>
+        </div>
+      </div>
+    );
+  }
+
+  const center = size / 2;
+  const radius = size * 0.42;
+  let accumulatedAngle = -Math.PI / 2;
+
+  const slices = activeItems.map((item) => {
+    const sliceAngle = (item.count / totalViolations) * 2 * Math.PI;
+    const startAngle = accumulatedAngle;
+    const endAngle = accumulatedAngle + sliceAngle;
+    accumulatedAngle += sliceAngle;
+
+    const x1 = center + radius * Math.cos(startAngle);
+    const y1 = center + radius * Math.sin(startAngle);
+    const x2 = center + radius * Math.cos(endAngle);
+    const y2 = center + radius * Math.sin(endAngle);
+
+    const largeArcFlag = sliceAngle > Math.PI ? 1 : 0;
+    const pathData = activeItems.length === 1
+      ? `M ${center} ${center - radius} A ${radius} ${radius} 0 1 1 ${center - 0.001} ${center - radius} Z`
+      : `M ${center} ${center} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2} Z`;
+
+    const midAngle = startAngle + sliceAngle / 2;
+    const textRadius = radius * 0.66;
+    const tx = center + textRadius * Math.cos(midAngle);
+    const ty = center + textRadius * Math.sin(midAngle);
+
+    return {
+      ...item,
+      pathData,
+      tx,
+      ty,
+      percentage: ((item.count / totalViolations) * 100).toFixed(1),
+    };
+  });
+
+  return (
+    <div className="pie-chart-wrap">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        {slices.map((s) => (
+          <path
+            key={s.key}
+            d={s.pathData}
+            fill={s.color}
+            stroke="#ffffff"
+            strokeWidth="2"
+            className="pie-slice"
+          >
+            <title>{`${s.label}: ${s.count} (${s.percentage}%)`}</title>
+          </path>
+        ))}
+        {slices.map((s) =>
+          Number(s.percentage) >= 8 ? (
+            <text
+              key={`txt-${s.key}`}
+              x={s.tx}
+              y={s.ty}
+              fill="#FFFFFF"
+              fontSize="11"
+              fontWeight="bold"
+              textAnchor="middle"
+              dominantBaseline="middle"
+            >
+              {s.percentage}%
+            </text>
+          ) : null
+        )}
+      </svg>
+    </div>
+  );
+}
+
+function HourlyTrendChart({ hourly = [], peakViolations = 0 }) {
+  const shiftHours = hourly.filter((h) => {
+    const hr = parseInt(h.hour, 10);
+    return hr >= 8 && hr <= 17;
+  });
+
+  const displayHours = shiftHours.length > 0 ? shiftHours : hourly.slice(0, 10);
+  const maxV = Math.max(...displayHours.map((h) => h.violations), 1);
+
+  return (
+    <div className="trend-chart-container">
+      <div className="trend-y-axis">
+        <span className="y-axis-title">Non-Compliant Detections</span>
+        <div className="y-ticks">
+          <span>{Math.max(10, maxV + 2)}</span>
+          <span>{Math.round((maxV + 2) / 2)}</span>
+          <span>0</span>
+        </div>
+      </div>
+
+      <div className="trend-bars-area">
+        {displayHours.map((item) => {
+          const isPeak = item.violations === peakViolations && peakViolations > 0;
+          const heightPct = Math.max(6, Math.round((item.violations / (maxV + 2)) * 100));
+
+          return (
+            <div key={item.hour} className={`trend-col ${isPeak ? "is-peak" : ""}`}>
+              {isPeak && (
+                <div className="peak-callout-badge">
+                  <span>Highest Violation Period</span>
+                  <div className="peak-arrow">↓</div>
+                </div>
+              )}
+              <span className="bar-count-label">{item.violations}</span>
+              <div
+                className={`trend-bar-rect ${isPeak ? "peak-bar" : "normal-bar"}`}
+                style={{ height: `${heightPct}%` }}
+              />
+              <span className="trend-x-label">{item.slot ? item.slot.replace("-", "-\n") : item.hour}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="trend-x-axis-title">Time (Hour)</div>
+    </div>
+  );
+}
+
+export function Dashboard({ connected, notify }) {
+  const [dates, setDates] = useState([]);
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [emailConfig, setEmailConfig] = useState(null);
+  const [showEmailConfig, setShowEmailConfig] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [emailStatus, setEmailStatus] = useState("");
+
+  // Load available dates
+  useEffect(() => {
+    let active = true;
+    request("/api/dashboard/dates")
+      .then((data) => {
+        if (!active) return;
+        if (data.dates && data.dates.length > 0) {
+          setDates(data.dates);
+          if (!data.dates.includes(selectedDate)) {
+            setSelectedDate(data.dates[0]);
+          }
+        }
+      })
+      .catch((err) => console.error("Could not load dates:", err));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Fetch summary data whenever selectedDate changes
+  const loadSummary = (date) => {
+    setLoading(true);
+    request(`/api/dashboard/summary?date=${encodeURIComponent(date)}`)
+      .then((data) => {
+        setSummary(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("Failed to fetch dashboard summary:", err);
+        setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    loadSummary(selectedDate);
+    // Auto-refresh today's data periodically if viewing today
+    const today = new Date().toISOString().slice(0, 10);
+    if (selectedDate === today) {
+      const interval = setInterval(() => {
+        request(`/api/dashboard/summary?date=${encodeURIComponent(today)}`)
+          .then((data) => setSummary(data))
+          .catch(() => {});
+      }, 3500);
+      return () => clearInterval(interval);
+    }
+  }, [selectedDate]);
+
+  // Load email config
+  useEffect(() => {
+    request("/api/reports/email-config")
+      .then((cfg) => setEmailConfig(cfg))
+      .catch(() => {});
+  }, []);
+
+  const handleSendEmail = async () => {
+    setSendingEmail(true);
+    setEmailStatus("Generating and dispatching report...");
+    try {
+      const res = await request("/api/reports/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: selectedDate }),
+      });
+      setEmailStatus(res.message || "Report sent successfully!");
+      if (notify) notify(res.message || "Email delivered successfully.");
+      // Refresh email config to update last_sent
+      const updated = await request("/api/reports/email-config");
+      setEmailConfig(updated);
+    } catch (err) {
+      setEmailStatus(`Delivery error: ${err.message}`);
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
+  const handleSaveEmailConfig = async (e) => {
+    e.preventDefault();
+    setSavingEmail(true);
+    try {
+      const updated = await request("/api/reports/email-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(emailConfig),
+      });
+      setEmailConfig(updated);
+      setEmailStatus(`Settings saved! ${updated.last_status || "Schedule active."}`);
+      if (notify) notify("Email delivery settings updated.");
+    } catch (err) {
+      setEmailStatus(`Failed to save: ${err.message}`);
+    } finally {
+      setSavingEmail(false);
+    }
+  };
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const isToday = selectedDate === todayStr;
+
   return (
     <section className="operator-page">
-      <PageHeader title="Sample dashboard">
-        An illustrative overview for presentation. These figures are synthetic.
+      <PageHeader title="Daily Safety Compliance Dashboard">
+        Real-time inspection telemetry, daily PPE violation breakdown, and automated daily shift audit reports.
       </PageHeader>
+
       <div className="ui-notice">
-        SAMPLE DATA · This dashboard does not count workers or retain inspection
-        records.
+        <strong>AUTOMATED AUDIT SCHEDULER ACTIVE</strong> · Reports are automatically generated and emailed daily at <strong>{emailConfig?.schedule_time || "05:30"}</strong> ({emailConfig?.last_status || "Armed"}). Real detection events from live monitoring are stored and aggregated continuously.
       </div>
+
+      {/* Date selector & Actions Bar */}
+      <div className="dashboard-toolbar">
+        <div className="dashboard-date-group">
+          <Calendar size={20} color="var(--color-blue-primary)" />
+          <label htmlFor="dashboard-date-select" className="sr-only">Select Audit Date</label>
+          <select
+            id="dashboard-date-select"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            aria-label="Select date"
+          >
+            {dates.map((d) => (
+              <option key={d} value={d}>
+                {d === todayStr ? `Today (${d})` : d}
+              </option>
+            ))}
+          </select>
+          <button
+            className="ui-button compact"
+            type="button"
+            title="Refresh statistics"
+            onClick={() => loadSummary(selectedDate)}
+            disabled={loading}
+          >
+            <RefreshCw size={14} className={loading ? "spin" : ""} />
+            Refresh
+          </button>
+        </div>
+
+        <div className="dashboard-actions">
+          <a
+            className="ui-button primary"
+            href={`/api/reports/daily/pdf?date=${encodeURIComponent(selectedDate)}`}
+            download={`ppe-daily-report-${selectedDate}.pdf`}
+            title="Download PDF report for the selected day"
+          >
+            <Download size={16} />
+            Download PDF Report
+          </a>
+
+          <button
+            className="ui-button"
+            type="button"
+            onClick={handleSendEmail}
+            disabled={sendingEmail}
+            title="Dispatch the selected daily PDF report to email recipients now"
+          >
+            <Send size={16} />
+            {sendingEmail ? "Dispatching…" : "Send PDF via Email"}
+          </button>
+
+          <button
+            className="ui-button"
+            type="button"
+            onClick={() => setShowEmailConfig((v) => !v)}
+            title="Configure automated 5:30 AM delivery, recipients, and email provider"
+          >
+            <Mail size={16} />
+            Email & 5:30 AM Settings
+          </button>
+        </div>
+      </div>
+
+      {/* Email feedback status if any */}
+      {emailStatus && (
+        <div
+          className={`ui-notice ${emailStatus.includes("error") || emailStatus.includes("Failed") ? "error" : ""}`}
+          role="status"
+        >
+          {emailStatus}
+        </div>
+      )}
+
+      {/* Expandable Email & Daily Scheduler Configuration Panel */}
+      {showEmailConfig && emailConfig && (
+        <form className="operator-card email-panel" onSubmit={handleSaveEmailConfig}>
+          <div className="section-title">
+            <Mail size={22} />
+            <h2>Automated Daily Email & PDF Delivery Settings</h2>
+          </div>
+          <p className="field-help">
+            The background service compiles the daily shift report into a PDF and automatically delivers it at the scheduled time. Real-time inference violations and compliance stats are included.
+          </p>
+
+          <div className="two-columns">
+            <label className="checkbox-row" style={{ marginTop: "12px" }}>
+              <input
+                type="checkbox"
+                checked={emailConfig.enabled}
+                onChange={(e) => setEmailConfig({ ...emailConfig, enabled: e.target.checked })}
+              />
+              <strong>Enable automated daily delivery</strong>
+            </label>
+
+            <label className="form-field">
+              Daily Delivery Schedule Time
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
+                <input
+                  type="time"
+                  step="60"
+                  value={emailConfig.schedule_time || "05:30"}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, schedule_time: e.target.value })}
+                  style={{ maxWidth: "160px", padding: "6px 10px", fontSize: "14px" }}
+                  required
+                />
+                <span className="field-help" style={{ margin: 0, fontWeight: 600, color: "var(--color-blue-primary)" }}>
+                  {emailConfig.last_status || "Active"}
+                </span>
+              </div>
+              <span className="field-help" style={{ marginTop: "4px" }}>
+                Tip: If you select a time that has already passed today, it will schedule for tomorrow morning. To test delivery right now, pick 1–2 minutes ahead or click &ldquo;Test &amp; Send PDF Now&rdquo; below.
+              </span>
+            </label>
+          </div>
+
+          <label className="form-field">
+            Recipient Emails (comma-separated)
+            <input
+              type="text"
+              value={(emailConfig.recipients || []).join(", ")}
+              onChange={(e) =>
+                setEmailConfig({
+                  ...emailConfig,
+                  recipients: e.target.value.split(",").map((s) => s.trim()),
+                })
+              }
+              placeholder="safety-officer@factory.internal, plant-manager@bekaert.com"
+              required
+            />
+          </label>
+
+          <label className="form-field">
+            Email Delivery Service
+            <select
+              value={emailConfig.service || "smtp"}
+              onChange={(e) => setEmailConfig({ ...emailConfig, service: e.target.value })}
+            >
+              <option value="smtp">SMTP (Recommended · 100% Free · Direct PDF Attachment)</option>
+              <option value="emailjs">EmailJS (REST API Service)</option>
+            </select>
+          </label>
+
+          {emailConfig.service === "smtp" ? (
+            <div className="three-columns" style={{ marginTop: "14px" }}>
+              <label className="form-field">
+                SMTP Host
+                <input
+                  type="text"
+                  value={emailConfig.smtp_host || ""}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, smtp_host: e.target.value })}
+                  placeholder="smtp.gmail.com"
+                />
+              </label>
+              <label className="form-field">
+                SMTP Port
+                <input
+                  type="number"
+                  value={emailConfig.smtp_port || 587}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, smtp_port: Number(e.target.value) })}
+                  placeholder="587"
+                />
+              </label>
+              <label className="form-field">
+                Username / Email
+                <input
+                  type="text"
+                  value={emailConfig.smtp_user || ""}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, smtp_user: e.target.value })}
+                  placeholder="your-email@gmail.com"
+                />
+              </label>
+              <label className="form-field" style={{ gridColumn: "span 2" }}>
+                App Password / Password
+                <input
+                  type="password"
+                  value={emailConfig.smtp_pass || ""}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, smtp_pass: e.target.value })}
+                  placeholder={emailConfig.has_smtp_pass ? "••••••••" : "Gmail App Password / SMTP password"}
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="two-columns" style={{ marginTop: "14px" }}>
+              <label className="form-field">
+                EmailJS Service ID
+                <input
+                  type="text"
+                  value={emailConfig.emailjs_service_id || ""}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, emailjs_service_id: e.target.value })}
+                  placeholder="service_xxx"
+                />
+              </label>
+              <label className="form-field">
+                EmailJS Template ID
+                <input
+                  type="text"
+                  value={emailConfig.emailjs_template_id || ""}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, emailjs_template_id: e.target.value })}
+                  placeholder="template_xxx"
+                />
+              </label>
+              <label className="form-field">
+                EmailJS Public Key
+                <input
+                  type="text"
+                  value={emailConfig.emailjs_public_key || ""}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, emailjs_public_key: e.target.value })}
+                  placeholder="Public Key"
+                />
+              </label>
+              <label className="form-field">
+                EmailJS Private Key (Access Token)
+                <input
+                  type="password"
+                  value={emailConfig.emailjs_private_key || ""}
+                  onChange={(e) => setEmailConfig({ ...emailConfig, emailjs_private_key: e.target.value })}
+                  placeholder="Private Key (for server-side PDF attachments)"
+                />
+              </label>
+            </div>
+          )}
+
+          <div className="button-row" style={{ marginTop: "16px" }}>
+            <button className="ui-button primary" type="submit" disabled={savingEmail}>
+              <Save size={16} />
+              {savingEmail ? "Saving…" : "Save Email Settings"}
+            </button>
+            <button
+              className="ui-button"
+              type="button"
+              onClick={handleSendEmail}
+              disabled={sendingEmail}
+            >
+              <Send size={16} />
+              Test & Send PDF Now
+            </button>
+          </div>
+          {emailConfig.last_status && (
+            <p className="field-help" style={{ marginTop: "10px" }}>
+              Status: <strong>{emailConfig.last_status}</strong>
+            </p>
+          )}
+        </form>
+      )}
+
+      {/* 1. OVERALL SUMMARY */}
+      <div className="section-title" style={{ marginTop: "12px", marginBottom: "8px" }}>
+        <h2>1. Overall Summary</h2>
+      </div>
+
       <div className="dashboard-metrics">
-        {[
-          [Users, "Personnel", 342, "blue"],
-          [ShieldCheck, "Compliant", 298, "green"],
-          [AlertTriangle, "Needs attention", 44, "red"],
-          [Video, "Cameras", 2, "blue"],
-        ].map(([Icon, label, value, tone]) => (
-          <article className="operator-card" key={label}>
-            <span className={`metric-icon-box ${tone}`}>
-              <Icon size={22} />
-            </span>
-            <span className="metric-label">Sample {label.toLowerCase()}</span>
-            <strong className="dashboard-number">{value}</strong>
-          </article>
-        ))}
+        <article className="operator-card">
+          <span className="metric-icon-box blue">
+            <Users size={22} />
+          </span>
+          <span className="metric-label">Total Detections</span>
+          <strong className="dashboard-number" style={{ color: "#0B2545" }}>
+            {summary?.total_inspections ?? 0}
+          </strong>
+        </article>
+
+        <article className="operator-card" style={{ background: "#F0FDF4", borderColor: "#BBF7D0" }}>
+          <span className="metric-icon-box green">
+            <CheckCircle2 size={22} />
+          </span>
+          <span className="metric-label" style={{ color: "#166534" }}>Compliant Detections</span>
+          <strong className="dashboard-number" style={{ color: "#16A34A" }}>
+            {summary?.compliant_count ?? 0}
+          </strong>
+        </article>
+
+        <article className="operator-card" style={{ background: "#FEF2F2", borderColor: "#FECACA" }}>
+          <span className="metric-icon-box red">
+            <AlertTriangle size={22} />
+          </span>
+          <span className="metric-label" style={{ color: "#991B1B" }}>Non-Compliant Detections</span>
+          <strong className="dashboard-number" style={{ color: "#DC2626" }}>
+            {summary?.violation_count ?? 0}
+          </strong>
+        </article>
+
+        <article className="operator-card donut-card" style={{ background: "#FFFBEB", borderColor: "#FDE68A" }}>
+          <span className="metric-label" style={{ color: "#92400E", marginBottom: "4px" }}>Violation Rate</span>
+          <DonutChart percentage={summary?.violation_rate ?? 0.0} />
+        </article>
       </div>
+
+      {/* 2 & 3: VIOLATIONS BY TYPE & HOURLY NON-COMPLIANCE TREND (SIDE BY SIDE) */}
+      <div className="dashboard-charts-grid">
+        {/* Section 2: Violations by Type Pie Chart */}
+        <article className="operator-card">
+          <div className="section-title">
+            <AlertTriangle size={20} color="#DC2626" />
+            <h2>2. Violations by Type (Non-Compliance)</h2>
+          </div>
+          <p className="field-help">
+            Proportional breakdown of observed safety violations by PPE category.
+          </p>
+
+          <div className="pie-container">
+            <ViolationPieChart
+              items={summary?.violations_by_type || []}
+              totalViolations={summary?.violation_count || 0}
+            />
+
+            <table className="pie-legend-table">
+              <tbody>
+                {(summary?.violations_by_type || []).map((v) => (
+                  <tr key={v.key}>
+                    <td>
+                      <span className="pie-legend-label">
+                        <span className="legend-dot" style={{ backgroundColor: v.color }} />
+                        {v.label}
+                      </span>
+                    </td>
+                    <td className="pie-legend-val">
+                      {v.count} ({v.percentage}%)
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        {/* Section 3: Hourly Non-Compliance Trend Bar Chart */}
+        <article className="operator-card">
+          <div className="section-title">
+            <Clock size={20} color="var(--color-blue-primary)" />
+            <h2>3. Hourly Non-Compliance Trend</h2>
+          </div>
+          <p className="field-help">
+            Hourly violation frequency across shift duration with peak hour highlight.
+          </p>
+
+          <HourlyTrendChart
+            hourly={summary?.hourly || []}
+            peakViolations={summary?.peak_violations || 0}
+          />
+        </article>
+      </div>
+
+      {/* Equipment Compliance Breakdown */}
       <article className="operator-card">
         <div className="section-title">
           <ShieldCheck size={22} />
-          <h2>Sample PPE observations</h2>
+          <h2>Equipment Compliance Breakdown ({selectedDate})</h2>
         </div>
         <p className="field-help">
-          Example rates for the display design; unrelated to model accuracy.
+          Real detection statistics compiled from camera evaluations on this date.
         </p>
-        <div className="sample-bars">
-          {[
-            ["Safety goggles", 87],
-            ["Clear wrists", 93],
-            ["Approved safety shoes", 96],
-          ].map(([label, value]) => (
-            <div key={label}>
-              <span>
-                {label}
-                <strong>{value}% sample</strong>
-              </span>
-              <meter min="0" max="100" value={value}>
-                {value}% sample
-              </meter>
-            </div>
-          ))}
+
+        {summary ? (
+          <div className="sample-bars">
+            {[
+              [
+                "Safety Goggles",
+                summary.categories?.goggles?.rate ?? 100,
+                summary.categories?.goggles?.compliant ?? 0,
+                summary.categories?.goggles?.violations ?? 0,
+              ],
+              [
+                "Wrist Protection (Clear Wrists)",
+                summary.categories?.wrist?.rate ?? 100,
+                summary.categories?.wrist?.compliant ?? 0,
+                summary.categories?.wrist?.violations ?? 0,
+              ],
+              [
+                "Approved Safety Shoes",
+                summary.categories?.shoes?.rate ?? 100,
+                summary.categories?.shoes?.compliant ?? 0,
+                summary.categories?.shoes?.violations ?? 0,
+              ],
+            ].map(([label, rate, comp, viol]) => (
+              <div key={label}>
+                <span>
+                  <strong>{label}</strong>
+                  <span>
+                    <strong style={{ color: viol > 0 ? "var(--ui-danger)" : "var(--ui-action)" }}>
+                      {rate}% compliant
+                    </strong>{" "}
+                    ({comp} compliant · {viol} violations)
+                  </span>
+                </span>
+                <meter min="0" max="100" value={rate}>
+                  {rate}%
+                </meter>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="field-help">Loading equipment metrics…</p>
+        )}
+      </article>
+
+      {/* Recent Violation Incidents Log */}
+      <article className="operator-card">
+        <div className="section-title">
+          <AlertTriangle size={22} />
+          <h2>Safety Violations Recorded ({selectedDate})</h2>
         </div>
+        <p className="field-help">
+          Timestamped inspection records flagging non-compliant PPE on the selected date.
+        </p>
+
+        {summary?.recent_violations && summary.recent_violations.length > 0 ? (
+          <div className="violations-table-wrap">
+            <table className="violations-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Camera View</th>
+                  <th>Violation Observed</th>
+                  <th>Detection Detail</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.recent_violations.map((v) => (
+                  <tr key={v.id}>
+                    <td><strong>{v.time}</strong></td>
+                    <td style={{ textTransform: "capitalize" }}>{v.view} View</td>
+                    <td>
+                      <span className="badge-pill danger">
+                        <XCircle size={12} />
+                        {(v.violations || []).map((x) => x.replace("no_goggles", "No Goggles").replace("not_empty_wrist", "Wrist Accessory").replace("NOT_SAFETY_SHOE", "Other Shoe")).join(", ") || "Violation"}
+                      </span>
+                    </td>
+                    <td>
+                      {v.details && v.details[0]
+                        ? `${v.details[0].class} (${Math.round(v.details[0].confidence * 100)}% conf)`
+                        : "Observed"}
+                    </td>
+                    <td>
+                      <span className="badge-pill danger">Action Required</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="field-help" style={{ padding: "16px 0" }}>
+            No PPE violations logged on {selectedDate}. All evaluated personnel met plant safety requirements.
+          </p>
+        )}
       </article>
     </section>
   );

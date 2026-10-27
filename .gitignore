@@ -5,6 +5,10 @@ __pycache__/
 TEMPORARY/
 data/
 config/settings.json
+config/email_config.json
+config/*.db
+config/*.sqlite*
+*.pdf
 models/*.pt
 *.lnk
 node_modules/

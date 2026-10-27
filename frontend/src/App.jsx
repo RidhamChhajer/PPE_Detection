@@ -16,7 +16,7 @@ import "./Workspace.css";
 const pages = {
   live: "Live",
   test: "Test media",
-  dashboard: "Sample dashboard",
+  dashboard: "Daily Dashboard",
   settings: "Settings",
 };
 const route = () =>
@@ -264,7 +264,11 @@ export default function App() {
                 connected={connected && !!status}
               />
             ) : page === "dashboard" ? (
-              <Dashboard />
+              <Dashboard
+                key={String(connected)}
+                connected={connected && !!status}
+                notify={notify}
+              />
             ) : (
               <SettingsPage
                 key={settingsKey}

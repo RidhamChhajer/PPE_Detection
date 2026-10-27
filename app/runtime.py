@@ -8,6 +8,7 @@ import numpy as np
 from app.cameras import CameraPool, frame_rate
 from app.config import VIEWS
 from app.inference import annotate, jpeg, summarize
+from app.audit import audit_store
 
 
 def placeholder(text):
@@ -94,7 +95,9 @@ class Runtime:
                 seen[view] = sequence
                 with self.lock:
                     result = self.states.get(view, {})
-                    fresh = time.monotonic() - result.get("timestamp", 0) < 1
+                    inf_ms = result.get("inference_ms") or 0
+                    max_age_sec = max(2.5, (inf_ms * 2.0) / 1000.0)
+                    fresh = (time.monotonic() - result.get("timestamp", 0)) < max_age_sec
                     detections = (
                         result.get("detections", []) if fresh and not result.get("error") else []
                     )
@@ -141,15 +144,17 @@ class Runtime:
                         detections, ms = self.detector.predict(view, frame, cfg)
                         error = ""
                     state = {
-                        "timestamp": stamp,
+                        "timestamp": time.monotonic(),
                         "detections": detections,
                         "inference_ms": ms,
                         "error": error,
                         "latency_ms": round((time.monotonic() - stamp) * 1000, 1),
                     }
+                    if not error and detections is not None:
+                        audit_store.record(view, summarize(detections), detections)
                 except Exception as exc:
                     state = {
-                        "timestamp": stamp,
+                        "timestamp": time.monotonic(),
                         "detections": [],
                         "inference_ms": None,
                         "error": f"Inference failed: {exc}",
@@ -184,7 +189,9 @@ class Runtime:
                 preview = self.previews.get(view, {})
                 preview_age = (time.monotonic() - preview["timestamp"]) * 1000 if preview else None
                 age = (time.monotonic() - state["timestamp"]) * 1000 if state else None
-                fresh = running and info["connected"] and age is not None and age < 1000
+                inf_ms = (state.get("inference_ms") or 0) if state else 0
+                max_age_ms = max(2500, inf_ms * 2.0)
+                fresh = running and info["connected"] and age is not None and age < max_age_ms
                 detections = state.get("detections", []) if fresh and not state.get("error") else []
                 views[view] = {
                     **info,

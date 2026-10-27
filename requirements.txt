@@ -10,3 +10,6 @@ cv2-enumerate-cameras==1.4.0
 sahi==0.12.8
 
 av==16.0.1
+reportlab==5.1.0
+matplotlib==3.11.2
+pypdfium2==5.14.0

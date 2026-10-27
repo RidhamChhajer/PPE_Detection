@@ -100,6 +100,7 @@ class Detector:
         self.models = {}
         self.wrist_slicer = None
         self.errors = {}
+        self.device = "cuda:0"
         self.gpu = {"ready": False, "name": "CUDA not checked", "error": "Run Setup GPU.cmd"}
 
     def load(self):
@@ -108,13 +109,14 @@ class Detector:
             try:
                 import torch
 
-                if not torch.cuda.is_available():
-                    raise RuntimeError(
-                        "CUDA unavailable. Run Setup GPU.cmd and check the NVIDIA driver."
-                    )
-                torch.ones(1, device="cuda:0").add_(1)
-                torch.cuda.synchronize()
-                self.gpu = {"ready": True, "name": torch.cuda.get_device_name(0), "error": ""}
+                if torch.cuda.is_available():
+                    torch.ones(1, device="cuda:0").add_(1)
+                    torch.cuda.synchronize()
+                    self.device = "cuda:0"
+                    self.gpu = {"ready": True, "name": torch.cuda.get_device_name(0), "error": ""}
+                else:
+                    self.device = "cpu"
+                    self.gpu = {"ready": True, "name": "CPU (Intel Iris Xe)", "error": ""}
             except ImportError:
                 self.gpu = {
                     "ready": False,
@@ -144,9 +146,10 @@ class Detector:
                         raise ValueError(
                             f"Model classes must be exactly {', '.join(CLASSES[view])}"
                         )
-                    model.to("cuda:0")
+                    model.to(self.device)
                     # SAHI must inherit the same precision as the full-frame pass to reuse its backend.
-                    model.overrides["quantize"] = 16
+                    if self.device.startswith("cuda"):
+                        model.overrides["quantize"] = 16
                     self.models[view] = model
                     self.errors[view] = ""
                 except Exception as exc:
@@ -159,7 +162,7 @@ class Detector:
         if self.wrist_slicer is None:
             self.wrist_slicer = UltralyticsDetectionModel(
                 model=self.models["upper"],
-                device="cuda:0",
+                device=self.device,
                 confidence_threshold=cfg.confidence,
                 image_size=cfg.sahi_slice,
             )
